@@ -73,19 +73,17 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 
 ### Decisões de protocolo
 
-Pontos que o enunciado deixa em aberto e como o grupo resolveu:
-
-| # | Ponto | Decisão | Motivo |
+| # | Ponto | Decisão |
 |---|---|---|---|
-| 1 | Salt da derivação E2E | Um `salt_AB` por **par** de clientes, gerado pelo servidor e enviado igual aos dois | Com um salt por cliente, A e B derivariam chaves diferentes |
-| 2 | Autenticidade das chaves dos peers | `PEER_JOIN` e `PEER_LEAVE` assinados com RSA-PSS e com `seq_send` | Sem assinatura, um MITM poderia trocar a chave pública de um peer |
-| 3 | Quem é A e quem é B | Em cada par, **A é quem conectou primeiro**. Quem recebe um `PEER_JOIN` de alguém que já estava conectado é B; quem é avisado da chegada de alguém novo é A | Os dois lados precisam escolher os labels `"A2B"`/`"B2A"` iguais. Na reconexão, o cliente vira o mais novo |
-| 4 | `pk_S` no hash assinado | Chave pública RSA do servidor em DER (SubjectPublicKeyInfo) | O enunciado não define o formato |
-| 5 | IV_base do outro lado | O receptor lê o nonce do frame e confere que `nonce[4:] == seq_no` | Cada lado sorteia o próprio IV_base, e o nonce já viaja no frame |
-| 6 | Tipo de mensagem | 1 byte de tipo após o prefixo de tamanho | O frame do enunciado não distingue handshake, controle e E2E |
-| 7 | Certificado | Cada integrante gera o seu; nada em `certs/` é versionado. Na apresentação, servidor e clientes rodam no mesmo notebook | Certificados versionados entrariam em conflito entre os integrantes |
-| 8 | Nome do cliente | Enviado no `HELLO` e repassado no `PEER_JOIN` assinado. De 1 a 32 caracteres `[A-Za-z0-9_-]`; o servidor recusa nomes repetidos | O enunciado só tem `client_id`, mas o chat precisa de `/msg <nome>` |
-| 9 | `client_id` | UUID v4 novo a cada execução; `--id <uuid>` reutiliza um id (teste de reconexão) | O enunciado exige testar a reconexão com o mesmo `client_id` |
+| 1 | Salt da derivação E2E | Um `salt_AB` por **par** de clientes, gerado pelo servidor e enviado igual aos dois
+| 2 | Autenticidade das chaves dos peers | `PEER_JOIN` e `PEER_LEAVE` assinados com RSA-PSS e com `seq_send` 
+| 3 | Quem é A e quem é B | Em cada par, **A é quem conectou primeiro**. Quem recebe um `PEER_JOIN` de alguém que já estava conectado é B; quem é avisado da chegada de alguém novo é A 
+| 4 | `pk_S` no hash assinado | Chave pública RSA do servidor em DER (SubjectPublicKeyInfo)
+| 5 | IV_base do outro lado | O receptor lê o nonce do frame e confere que `nonce[4:] == seq_no` 
+| 6 | Tipo de mensagem | 1 byte de tipo após o prefixo de tamanho 
+| 7 | Certificado | Cada integrante gera o seu; nada em `certs/` é versionado. Na apresentação, servidor e clientes rodam no mesmo notebook 
+| 8 | Nome do cliente | Enviado no `HELLO` e repassado no `PEER_JOIN` assinado. De 1 a 32 caracteres `[A-Za-z0-9_-]`; o servidor recusa nomes repetidos 
+| 9 | `client_id` | UUID v4 novo a cada execução; `--id <uuid>` reutiliza um id (teste de reconexão) 
 
 ## Estrutura do projeto
 
