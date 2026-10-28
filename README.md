@@ -2,7 +2,7 @@
 
 Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servidor funciona só como *relay*: ele autentica o handshake e distribui as chaves públicas, mas **não tem como decifrar** as mensagens trocadas entre os clientes.
 
-> Trabalho Prático 3 da disciplina **Segurança da Informação** (Prof. Michel Sales).
+> Trabalho Prático 2 da disciplina de Segurança - UFC (Prof.Michel Sales).
 
 ## Garantias de segurança
 
@@ -143,11 +143,3 @@ Os testes cobrem os cenários obrigatórios:
 
 Os logs **nunca** contêm chaves privadas, segredos ECDH, salts, nonces ou conteúdo de mensagens. Ficam registrados só eventos de conexão/desconexão, `client_id`, tamanhos de frame, motivos de rejeição e fingerprints (SHA-256 truncado) das chaves públicas.
 
-## Contribuindo
-
-Veja o [CONTRIBUTING.md](CONTRIBUTING.md) para o fluxo de branches, PRs e as regras de segurança do código.
-
-## Autores
-
-- Guilherme Cardoso
-- _adicione os demais integrantes_
