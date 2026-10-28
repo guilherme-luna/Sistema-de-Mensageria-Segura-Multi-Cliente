@@ -39,15 +39,16 @@ def test_bind_host_and_client_host_are_independent(monkeypatch):
     assert load_client_config().host == "192.168.0.10"
 
 
-@pytest.mark.parametrize("var", ["SERVER_BIND_HOST", "SERVER_PORT", "LOG_LEVEL", "SERVER_KEY_PATH"])
-def test_empty_value_uses_default(monkeypatch, var):
+@pytest.mark.parametrize("var, attr, expected", [
+    ("SERVER_BIND_HOST", "bind_host", "127.0.0.1"),
+    ("SERVER_PORT", "port", 9000),
+    ("LOG_LEVEL", "log_level", "INFO"),
+    ("SERVER_KEY_PATH", "key_path", ROOT_DIR / "certs/server.key"),
+])
+def test_empty_value_uses_default(monkeypatch, var, attr, expected):
     # Uma linha "VAR=" no .env não pode virar string vazia (ex.: bind em todas as interfaces)
     monkeypatch.setenv(var, "   ")
-    config = load_server_config()
-    assert config.bind_host == "127.0.0.1"
-    assert config.port == 9000
-    assert config.log_level == "INFO"
-    assert config.key_path == ROOT_DIR / "certs/server.key"
+    assert getattr(load_server_config(), attr) == expected
 
 
 def test_relative_paths_resolve_from_project_root(monkeypatch, tmp_path):

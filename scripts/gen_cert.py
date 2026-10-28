@@ -35,7 +35,10 @@ def main() -> None:
         raise SystemExit(f"erro de configuração: {e}") from None
     key_path, cert_path = config.key_path, config.cert_path
 
-    if (key_path.exists() or cert_path.exists()) and not args.force:
+    for path in (key_path, cert_path):
+        if path.exists() and not path.is_file():
+            raise SystemExit(f"{path} existe mas não é um arquivo (é uma pasta?); remova-o antes")
+    if (key_path.is_file() or cert_path.is_file()) and not args.force:
         raise SystemExit(f"{key_path} ou {cert_path} já existe (use --force para sobrescrever)")
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=RSA_KEY_BITS)
@@ -65,6 +68,8 @@ def main() -> None:
     fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(key_bytes)
+    # O modo do os.open só vale para arquivo novo; com --force o arquivo antigo mantinha a permissão anterior
+    os.chmod(key_path, 0o600)
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
 
     spki = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)

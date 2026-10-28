@@ -78,7 +78,7 @@ def load_server_config() -> ServerConfig:
         max_clients=_get_int("MAX_CLIENTS", 64, 1, 10_000),
         handshake_timeout=_get_int("HANDSHAKE_TIMEOUT", 10, 1, 300),
         key_path=_get_path("SERVER_KEY_PATH", "certs/server.key"),
-        cert_path=_get_path("SERVER_CERT_PATH", "certs/server.crt"),
+        cert_path=_get_path("SERVER_CERT_PATH", "certs/public/server.crt"),
         log_level=_get_log_level(),
     )
 
@@ -88,6 +88,6 @@ def load_client_config() -> ClientConfig:
     return ClientConfig(
         host=_get_str("SERVER_HOST", "127.0.0.1"),
         port=_get_int("SERVER_PORT", 9000, 1, 65535),
-        pinned_cert_path=_get_path("PINNED_CERT_PATH", "certs/server.crt"),
+        pinned_cert_path=_get_path("PINNED_CERT_PATH", "certs/public/server.crt"),
         log_level=_get_log_level(),
     )

@@ -11,9 +11,10 @@ htmlcov/
 
 # Segredos: NUNCA versionar
 .env
-certs/*.key
+# Tudo em certs/ é gerado localmente por cada integrante (chave privada e certificado)
+certs/*
 *.pem
-!certs/server.crt
+!certs/.gitkeep
 
 # Editores / SO
 .vscode/

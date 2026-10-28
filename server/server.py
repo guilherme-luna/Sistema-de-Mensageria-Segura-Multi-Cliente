@@ -10,9 +10,19 @@ import logging
 from dataclasses import replace
 
 from common.config import ConfigError, ServerConfig, load_server_config
+from common.framing import encode_error
 from common.log import force_utf8_output, setup_logging
+from common.protocol import ErrorCode
 
 log = logging.getLogger("server")
+
+
+async def _close(writer: asyncio.StreamWriter) -> None:
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except ConnectionError:
+        pass
 
 
 class RelayServer:
@@ -25,8 +35,8 @@ class RelayServer:
 
         if len(self.connections) >= self.config.max_clients:
             log.warning("limite de %d clientes atingido, recusando %s", self.config.max_clients, peer)
-            writer.close()
-            await writer.wait_closed()
+            writer.write(encode_error(ErrorCode.SERVER_FULL))
+            await _close(writer)
             return
 
         self.connections.add(writer)
@@ -39,7 +49,7 @@ class RelayServer:
             pass
         finally:
             self.connections.discard(writer)
-            writer.close()
+            await _close(writer)
             log.info("desconexão de %s (%d ativas)", peer, len(self.connections))
 
     async def serve(self) -> None:
