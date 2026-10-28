@@ -1,21 +1,78 @@
-# Sistema de Mensageria Segura Multi-Cliente
+<div align="center">
+
+# 🔐 Sistema de Mensageria Segura Multi-Cliente
 
 Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servidor funciona só como *relay*: ele autentica o handshake e distribui as chaves públicas, mas **não tem como decifrar** as mensagens trocadas entre os clientes.
 
+[![CI](https://github.com/guilherme-luna/Sistema-de-Mensageria-Segura-Multi-Cliente/actions/workflows/ci.yml/badge.svg)](https://github.com/guilherme-luna/Sistema-de-Mensageria-Segura-Multi-Cliente/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![cryptography](https://img.shields.io/badge/cryptography-50.0.2-6E4C9E)
+![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)
+![E2E](https://img.shields.io/badge/E2E-AES--128--GCM%20%7C%20X25519%20%7C%20RSA--PSS-success)
+
+</div>
+
 > Trabalho Prático 2 da disciplina de Segurança - UFC (Prof.Michel Sales).
 
-## Garantias de segurança
+<details>
+<summary><b>📑 Sumário</b></summary>
+
+- [Garantias de segurança](#-garantias-de-segurança)
+- [Como funciona](#-como-funciona)
+  - [Formato dos frames](#formato-dos-frames)
+  - [Decisões de protocolo](#decisões-de-protocolo)
+- [Estrutura do projeto](#-estrutura-do-projeto)
+- [Requisitos](#-requisitos)
+- [Configuração](#-configuração)
+- [Uso](#-uso)
+  - [Em máquinas diferentes (mesma rede)](#em-máquinas-diferentes-mesma-rede)
+  - [Com Docker](#com-docker)
+- [Testes](#-testes)
+- [Parâmetros](#-parâmetros)
+- [Política de logs](#-política-de-logs)
+
+</details>
+
+---
+
+## 🔒 Garantias de segurança
 
 | Propriedade | Mecanismo |
 |---|---|
-| Confidencialidade | AES-128-GCM (AEAD) |
-| Integridade | Tag de autenticação do GCM (16 bytes) |
-| Autenticidade do servidor | Certificado RSA autoassinado e pinado + assinatura RSA-PSS/SHA-256 |
-| Sigilo perfeito (*forward secrecy*) | Chaves efêmeras X25519 (ECDHE) |
-| Anti-replay | `seq_no` monotônico por direção |
-| Servidor cego | Chaves E2E derivadas apenas nos clientes (HKDF-SHA256) |
+| 🔒 Confidencialidade | AES-128-GCM (AEAD) |
+| ✅ Integridade | Tag de autenticação do GCM (16 bytes) |
+| 🪪 Autenticidade do servidor | Certificado RSA autoassinado e pinado + assinatura RSA-PSS/SHA-256 |
+| ⏳ Sigilo perfeito (*forward secrecy*) | Chaves efêmeras X25519 (ECDHE) |
+| 🔁 Anti-replay | `seq_no` monotônico por direção |
+| 🙈 Servidor cego | Chaves E2E derivadas apenas nos clientes (HKDF-SHA256) |
 
-## Como funciona
+---
+
+## 🧭 Como funciona
+
+```mermaid
+sequenceDiagram
+    participant A as Cliente A (1º a conectar)
+    participant S as Servidor
+    participant B as Cliente B (2º a conectar)
+
+    A->>S: HELLO: id_A + pk_A + nome
+    S->>A: HELLO_RESP: cert + salt + assinatura
+    B->>S: HELLO: id_B + pk_B + nome
+    S->>B: HELLO_RESP
+    Note over S: gera salt_AB do par
+    S->>A: PEER_JOIN: B, pk_B, salt_AB, assinatura
+    S->>B: PEER_JOIN: A, pk_A, salt_AB, assinatura
+
+    Note over A,B: Z_AB = X25519(sk_A, pk_B) = X25519(sk_B, pk_A)<br/>PRK = HKDF-Extract(salt_AB, Z_AB)<br/>Key_A2B / Key_B2A = HKDF-Expand(PRK, "A2B"/"B2A", 16)
+
+    A->>S: E2E cifrado
+    S->>B: encaminha bytes
+    Note over B: decifra + valida tag
+```
+
+<details>
+<summary>Versão em texto do diagrama</summary>
 
 ```
 Cliente A (1º a conectar)         Servidor                  Cliente B (2º a conectar)
@@ -35,6 +92,8 @@ Cliente A (1º a conectar)         Servidor                  Cliente B (2º a co
     |                                |            decifra + valida tag
 ```
 
+</details>
+
 1. **Handshake:** o cliente gera um par X25519 efêmero e envia `HELLO` com `client_id` (UUID v4, 16 B), `pk_client` (32 B raw) e seu nome.
 2. **Autenticação do servidor:** o servidor responde `HELLO_RESP` com seu certificado, um `salt` de 16 B e a assinatura RSA-PSS de `SHA256(pk_S || pk_client || client_id || salt)`, onde `pk_S` é a chave pública RSA do servidor em DER. O cliente verifica a assinatura com o certificado pinado (`certs/public/server.crt`).
 3. **Rendezvous:** para cada par de clientes, o servidor gera um `salt_AB` aleatório e envia aos dois um `PEER_JOIN` com o `client_id`, a chave pública e o nome do outro, o `salt_AB` e um contador `seq_send`, tudo assinado com RSA-PSS. Um MITM não consegue trocar a chave de um peer sem invalidar a assinatura.
@@ -50,7 +109,7 @@ Todo frame em TCP começa com o tamanho (4 bytes, big-endian, contando tipo + co
 ```
 
 | Tipo | Valor | Direção | Corpo |
-|---|---|---|---|
+|---|:---:|---|---|
 | `HELLO` | `0x01` | cliente → servidor | client_id + pk_client + nome |
 | `HELLO_RESP` | `0x02` | servidor → cliente | certificado + salt + assinatura |
 | `PEER_JOIN` | `0x03` | servidor → cliente | client_id + pk + nome do peer + salt_AB + seq_send + assinatura |
@@ -58,7 +117,8 @@ Todo frame em TCP começa com o tamanho (4 bytes, big-endian, contando tipo + co
 | `E2E` | `0x10` | cliente → cliente (relay) | frame E2E abaixo |
 | `ERROR` | `0x7F` | servidor → cliente | código de erro (1 B) |
 
-Tipo desconhecido ou tamanho inválido é tratado como erro de framing: a conexão é encerrada.
+> [!IMPORTANT]
+> Tipo desconhecido ou tamanho inválido é tratado como erro de framing: a conexão é encerrada.
 
 O corpo de um frame `E2E` é exatamente o frame do enunciado:
 
@@ -74,18 +134,20 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 ### Decisões de protocolo
 
 | # | Ponto | Decisão |
-|---|---|---|---|
-| 1 | Salt da derivação E2E | Um `salt_AB` por **par** de clientes, gerado pelo servidor e enviado igual aos dois
-| 2 | Autenticidade das chaves dos peers | `PEER_JOIN` e `PEER_LEAVE` assinados com RSA-PSS e com `seq_send` 
-| 3 | Quem é A e quem é B | Em cada par, **A é quem conectou primeiro**. Quem recebe um `PEER_JOIN` de alguém que já estava conectado é B; quem é avisado da chegada de alguém novo é A 
-| 4 | `pk_S` no hash assinado | Chave pública RSA do servidor em DER (SubjectPublicKeyInfo)
-| 5 | IV_base do outro lado | O receptor lê o nonce do frame e confere que `nonce[4:] == seq_no` 
-| 6 | Tipo de mensagem | 1 byte de tipo após o prefixo de tamanho 
-| 7 | Certificado | Cada integrante gera o seu; nada em `certs/` é versionado. Na apresentação, servidor e clientes rodam no mesmo notebook 
-| 8 | Nome do cliente | Enviado no `HELLO` e repassado no `PEER_JOIN` assinado. De 1 a 32 caracteres `[A-Za-z0-9_-]`; o servidor recusa nomes repetidos 
-| 9 | `client_id` | UUID v4 novo a cada execução; `--id <uuid>` reutiliza um id (teste de reconexão) 
+|:---:|---|---|
+| 1 | Salt da derivação E2E | Um `salt_AB` por **par** de clientes, gerado pelo servidor e enviado igual aos dois |
+| 2 | Autenticidade das chaves dos peers | `PEER_JOIN` e `PEER_LEAVE` assinados com RSA-PSS e com `seq_send` |
+| 3 | Quem é A e quem é B | Em cada par, **A é quem conectou primeiro**. Quem recebe um `PEER_JOIN` de alguém que já estava conectado é B; quem é avisado da chegada de alguém novo é A |
+| 4 | `pk_S` no hash assinado | Chave pública RSA do servidor em DER (SubjectPublicKeyInfo) |
+| 5 | IV_base do outro lado | O receptor lê o nonce do frame e confere que `nonce[4:] == seq_no` |
+| 6 | Tipo de mensagem | 1 byte de tipo após o prefixo de tamanho |
+| 7 | Certificado | Cada integrante gera o seu; nada em `certs/` é versionado. Na apresentação, servidor e clientes rodam no mesmo notebook |
+| 8 | Nome do cliente | Enviado no `HELLO` e repassado no `PEER_JOIN` assinado. De 1 a 32 caracteres `[A-Za-z0-9_-]`; o servidor recusa nomes repetidos |
+| 9 | `client_id` | UUID v4 novo a cada execução; `--id <uuid>` reutiliza um id (teste de reconexão) |
 
-## Estrutura do projeto
+---
+
+## 📁 Estrutura do projeto
 
 ```
 .
@@ -108,7 +170,9 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
         └── server.crt  #   certificado pinado (copiado para os clientes)
 ```
 
-## Requisitos
+---
+
+## 📦 Requisitos
 
 - Python 3.10+ (o CI testa em 3.10 e 3.13)
 - [`cryptography`](https://cryptography.io/) e [`python-dotenv`](https://github.com/theskumar/python-dotenv), em versões fixas no `requirements.txt` para que todas as máquinas instalem exatamente o mesmo
@@ -119,7 +183,9 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 ```
 
-## Configuração
+---
+
+## 🔧 Configuração
 
 As configurações vêm de variáveis de ambiente. Para usar um arquivo local, copie o exemplo (o `.env` não é versionado):
 
@@ -139,9 +205,12 @@ cp .env.example .env
 | `PINNED_CERT_PATH` | `certs/public/server.crt` | cliente | certificado pinado do servidor |
 | `LOG_LEVEL` | `INFO` | ambos | `DEBUG`, `INFO`, `WARNING` ou `ERROR` |
 
-Os argumentos `--host` e `--port` têm prioridade sobre as variáveis. Variáveis vazias usam o padrão, e caminhos relativos partem da raiz do projeto. Os comandos `python -m ...` devem ser rodados na raiz do projeto. As constantes do protocolo (tamanhos de salt, nonce, tag e plaintext máximo) ficam em `common/protocol.py` e não são configuráveis, porque cliente e servidor precisam concordar nelas.
+> [!NOTE]
+> Os argumentos `--host` e `--port` têm prioridade sobre as variáveis. Variáveis vazias usam o padrão, e caminhos relativos partem da raiz do projeto. Os comandos `python -m ...` devem ser rodados na raiz do projeto. As constantes do protocolo (tamanhos de salt, nonce, tag e plaintext máximo) ficam em `common/protocol.py` e não são configuráveis, porque cliente e servidor precisam concordar nelas.
 
-## Uso
+---
+
+## 🚀 Uso
 
 **1. Gerar o certificado do servidor** (uma vez):
 
@@ -198,7 +267,10 @@ Na primeira execução, o Windows pergunta sobre o Firewall: permita o acesso ma
 
 **2. Em cada máquina de cliente**
 
-Copie **apenas** o `certs/public/server.crt` da máquina do servidor para `certs/public/server.crt` do projeto (pen drive, Discord, etc.). Cada integrante gerar o próprio certificado não funciona: o cliente só confia no certificado do servidor em que vai conectar. O `server.key` nunca sai da máquina do servidor.
+Copie **apenas** o `certs/public/server.crt` da máquina do servidor para `certs/public/server.crt` do projeto (pen drive, Discord, etc.). Cada integrante gerar o próprio certificado não funciona: o cliente só confia no certificado do servidor em que vai conectar.
+
+> [!WARNING]
+> O `server.key` nunca sai da máquina do servidor.
 
 No `.env`:
 
@@ -214,7 +286,8 @@ python -m client.client --name bob
 
 O servidor mostra `conexão de ('<IP do cliente>', ...)` e o cliente mostra `bob conectado a 192.168.0.16:9000`.
 
-**Se não conectar**
+<details>
+<summary><b>🩺 Se não conectar</b></summary>
 
 | Sintoma | Causa provável | Solução |
 |---|---|---|
@@ -222,6 +295,8 @@ O servidor mostra `conexão de ('<IP do cliente>', ...)` e o cliente mostra `bob
 | Timeout mesmo com o firewall liberado | A rede (ex.: Wi-Fi da faculdade) bloqueia comunicação entre aparelhos | Use um hotspot de celular |
 | `Connection refused` | Servidor não está rodando ou está com `SERVER_BIND_HOST=127.0.0.1` | Confira o `.env` do servidor e reinicie |
 | `certificado pinado não encontrado` | `server.crt` não foi copiado para o cliente | Copie para `certs/public/server.crt` ou ajuste `PINNED_CERT_PATH` |
+
+</details>
 
 ### Com Docker
 
@@ -232,7 +307,9 @@ docker compose up --build server                # servidor na porta do .env (pad
 docker compose run --rm client --name alice     # cliente, em outro terminal
 ```
 
-## Testes
+---
+
+## 🧪 Testes
 
 ```bash
 pytest -v
@@ -240,13 +317,15 @@ pytest -v
 
 Os testes cobrem os cenários obrigatórios:
 
-- troca de mensagens E2E entre 2+ clientes
-- frame adulterado (bitflip) → rejeitado por falha na tag GCM
-- frame reenviado (replay) → rejeitado por `seq_no` repetido
-- framing inválido → erro e desconexão segura
-- reconexão com o mesmo `client_id` → handshake completo e chaves novas
+- ✅ troca de mensagens E2E entre 2+ clientes
+- 🧨 frame adulterado (bitflip) → rejeitado por falha na tag GCM
+- 🔁 frame reenviado (replay) → rejeitado por `seq_no` repetido
+- 🚫 framing inválido → erro e desconexão segura
+- 🔌 reconexão com o mesmo `client_id` → handshake completo e chaves novas
 
-## Parâmetros
+---
+
+## 📐 Parâmetros
 
 | Parâmetro | Valor |
 |---|---|
@@ -257,7 +336,11 @@ Os testes cobrem os cenários obrigatórios:
 | Tag GCM | 16 B |
 | Plaintext máximo por mensagem | 4096 B |
 
-## Política de logs
+---
 
-Os logs **nunca** contêm chaves privadas, segredos ECDH, salts, nonces ou conteúdo de mensagens. Ficam registrados só eventos de conexão/desconexão, `client_id`, tamanhos de frame, motivos de rejeição e fingerprints (SHA-256 truncado) das chaves públicas.
+## 📝 Política de logs
 
+> [!CAUTION]
+> Os logs **nunca** contêm chaves privadas, segredos ECDH, salts, nonces ou conteúdo de mensagens.
+
+Ficam registrados só eventos de conexão/desconexão, `client_id`, tamanhos de frame, motivos de rejeição e fingerprints (SHA-256 truncado) das chaves públicas.
