@@ -9,7 +9,8 @@ venv/
 .coverage
 htmlcov/
 
-# Chaves privadas: NUNCA versionar
+# Segredos: NUNCA versionar
+.env
 certs/*.key
 *.pem
 !certs/server.crt

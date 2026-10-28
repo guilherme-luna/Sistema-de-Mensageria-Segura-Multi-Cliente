@@ -80,8 +80,30 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+## Configuração
+
+As configurações vêm de variáveis de ambiente. Para usar um arquivo local, copie o exemplo (o `.env` não é versionado):
+
+```bash
+cp .env.example .env
+```
+
+| Variável | Padrão | Usada por | Descrição |
+|---|---|---|---|
+| `SERVER_BIND_HOST` | `127.0.0.1` | servidor | interface de escuta (`0.0.0.0` aceita outras máquinas) |
+| `SERVER_HOST` | `127.0.0.1` | cliente | endereço do servidor |
+| `SERVER_PORT` | `9000` | servidor / cliente | porta TCP |
+| `MAX_CLIENTS` | `64` | servidor | conexões simultâneas aceitas |
+| `HANDSHAKE_TIMEOUT` | `10` | servidor | segundos para concluir o handshake |
+| `SERVER_KEY_PATH` | `certs/server.key` | servidor | chave privada RSA |
+| `SERVER_CERT_PATH` | `certs/server.crt` | servidor | certificado autoassinado |
+| `PINNED_CERT_PATH` | `certs/server.crt` | cliente | certificado pinado do servidor |
+| `LOG_LEVEL` | `INFO` | ambos | `DEBUG`, `INFO`, `WARNING` ou `ERROR` |
+
+Os argumentos `--host` e `--port` têm prioridade sobre as variáveis. Variáveis vazias usam o padrão, e caminhos relativos partem da raiz do projeto. Os comandos `python -m ...` devem ser rodados na raiz do projeto. As constantes do protocolo (tamanhos de salt, nonce, tag e plaintext máximo) ficam em `common/protocol.py` e não são configuráveis, porque cliente e servidor precisam concordar nelas.
 
 ## Uso
 
@@ -96,14 +118,14 @@ Isso cria `certs/server.key` (privada, ignorada pelo git) e `certs/server.crt` (
 **2. Subir o servidor:**
 
 ```bash
-python -m server.server --host 127.0.0.1 --port 9000
+python -m server.server
 ```
 
 **3. Conectar clientes** (um terminal para cada):
 
 ```bash
-python -m client.client --host 127.0.0.1 --port 9000 --name alice
-python -m client.client --host 127.0.0.1 --port 9000 --name bob
+python -m client.client --name alice
+python -m client.client --name bob
 ```
 
 **4. Comandos no cliente:**
@@ -113,6 +135,23 @@ python -m client.client --host 127.0.0.1 --port 9000 --name bob
 | `/peers` | lista os clientes conectados |
 | `/msg <nome> <texto>` | envia uma mensagem E2E |
 | `/quit` | desconecta |
+
+### Em máquinas diferentes (mesma rede)
+
+1. Na máquina do **servidor**: gere o certificado, defina `SERVER_BIND_HOST=0.0.0.0` no `.env` e libere a porta no firewall (no Windows, aceite o aviso do Firewall na primeira execução).
+2. Copie **apenas** o `certs/server.crt` para cada máquina de cliente, no mesmo caminho. Cada integrante gerar o próprio certificado não funciona: o cliente só confia no certificado do servidor em que vai conectar.
+3. Nos **clientes**: defina `SERVER_HOST=<IP da máquina do servidor>` (veja com `ipconfig` / `ip addr`).
+
+O `server.key` nunca sai da máquina do servidor.
+
+### Com Docker
+
+Gere o certificado antes (passo 1). Ele entra por volume, nunca na imagem. As variáveis do `.env` são lidas pelo Compose; os caminhos dos certificados são fixos dentro do container.
+
+```bash
+docker compose up --build server                # servidor na porta do .env (padrão 9000)
+docker compose run --rm client --name alice     # cliente, em outro terminal
+```
 
 ## Testes
 

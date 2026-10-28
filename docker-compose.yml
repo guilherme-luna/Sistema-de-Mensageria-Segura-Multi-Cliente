@@ -1,0 +1,46 @@
+# As variáveis abaixo vêm do .env da raiz (lido pelo próprio Compose) ou do padrão.
+# Os caminhos dos certificados são fixos dentro do container, para que caminhos
+# do host (ex.: C:\...) definidos no .env não quebrem o container.
+
+services:
+  server:
+    build: .
+    environment:
+      SERVER_BIND_HOST: 0.0.0.0
+      SERVER_PORT: ${SERVER_PORT:-9000}
+      MAX_CLIENTS: ${MAX_CLIENTS:-64}
+      HANDSHAKE_TIMEOUT: ${HANDSHAKE_TIMEOUT:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SERVER_KEY_PATH: /app/certs/server.key
+      SERVER_CERT_PATH: /app/certs/server.crt
+    ports:
+      - "${SERVER_PORT:-9000}:${SERVER_PORT:-9000}"
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /app/certs
+        read_only: true
+
+  # Uso: docker compose run --rm client --name alice
+  client:
+    build: .
+    profiles: ["client"]
+    entrypoint: ["python", "-m", "client.client"]
+    stdin_open: true
+    tty: true
+    environment:
+      SERVER_HOST: server
+      SERVER_PORT: ${SERVER_PORT:-9000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PINNED_CERT_PATH: /app/certs/server.crt
+    volumes:
+      # create_host_path: false -> erro claro se o certificado ainda não foi
+      # gerado, em vez de o Docker criar uma pasta vazia chamada server.crt
+      - type: bind
+        source: ./certs/server.crt
+        target: /app/certs/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      - server
