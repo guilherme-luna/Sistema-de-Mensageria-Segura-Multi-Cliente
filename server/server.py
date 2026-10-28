@@ -73,7 +73,7 @@ def main() -> None:
         raise SystemExit(f"erro de configuração: {e}") from None
     setup_logging(config.log_level)
 
-    if not config.key_path.exists() or not config.cert_path.exists():
+    if not config.key_path.is_file() or not config.cert_path.is_file():
         raise SystemExit("certificado não encontrado, rode: python scripts/gen_cert.py")
 
     try:

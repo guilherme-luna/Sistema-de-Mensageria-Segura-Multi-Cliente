@@ -48,8 +48,11 @@ def main() -> None:
         raise SystemExit(f"erro de configuração: {e}") from None
     setup_logging(config.log_level)
 
-    if not config.pinned_cert_path.exists():
-        raise SystemExit(f"certificado pinado não encontrado em {config.pinned_cert_path}")
+    if not config.pinned_cert_path.is_file():
+        raise SystemExit(
+            f"certificado pinado não encontrado em {config.pinned_cert_path} "
+            "(copie o server.crt gerado na máquina do servidor)"
+        )
 
     try:
         asyncio.run(run(config, name))

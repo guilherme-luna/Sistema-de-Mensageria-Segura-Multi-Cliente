@@ -34,13 +34,12 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PINNED_CERT_PATH: /app/certs/server.crt
     volumes:
-      # create_host_path: false -> erro claro se o certificado ainda não foi
-      # gerado, em vez de o Docker criar uma pasta vazia chamada server.crt
+      # Monta a pasta, não o arquivo: montar um arquivo que ainda não existe faz o
+      # Docker Desktop criar uma PASTA vazia chamada server.crt no host.
+      # Se o certificado não tiver sido gerado, o cliente falha com erro claro.
       - type: bind
-        source: ./certs/server.crt
-        target: /app/certs/server.crt
+        source: ./certs
+        target: /app/certs
         read_only: true
-        bind:
-          create_host_path: false
     depends_on:
       - server

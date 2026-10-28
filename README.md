@@ -138,11 +138,52 @@ python -m client.client --name bob
 
 ### Em máquinas diferentes (mesma rede)
 
-1. Na máquina do **servidor**: gere o certificado, defina `SERVER_BIND_HOST=0.0.0.0` no `.env` e libere a porta no firewall (no Windows, aceite o aviso do Firewall na primeira execução).
-2. Copie **apenas** o `certs/server.crt` para cada máquina de cliente, no mesmo caminho. Cada integrante gerar o próprio certificado não funciona: o cliente só confia no certificado do servidor em que vai conectar.
-3. Nos **clientes**: defina `SERVER_HOST=<IP da máquina do servidor>` (veja com `ipconfig` / `ip addr`).
+Todas as máquinas precisam estar na mesma rede (mesmo Wi-Fi ou hotspot).
 
-O `server.key` nunca sai da máquina do servidor.
+**1. Na máquina do servidor**
+
+```bash
+python scripts/gen_cert.py
+```
+
+No `.env`:
+
+```
+SERVER_BIND_HOST=0.0.0.0
+```
+
+```bash
+python -m server.server
+```
+
+Na primeira execução, o Windows pergunta sobre o Firewall: permita o acesso marcando **rede privada**. Anote o IP da máquina (`ipconfig` no Windows, `ip addr` no Linux, campo "Endereço IPv4"), por exemplo `192.168.0.16`.
+
+**2. Em cada máquina de cliente**
+
+Copie **apenas** o `certs/server.crt` da máquina do servidor para `certs/server.crt` do projeto (pen drive, Discord, etc.). Cada integrante gerar o próprio certificado não funciona: o cliente só confia no certificado do servidor em que vai conectar. O `server.key` nunca sai da máquina do servidor.
+
+No `.env`:
+
+```
+SERVER_HOST=192.168.0.16   # IP anotado no passo 1
+```
+
+```bash
+python -m client.client --name bob
+```
+
+**3. Resultado esperado**
+
+O servidor mostra `conexão de ('<IP do cliente>', ...)` e o cliente mostra `bob conectado a 192.168.0.16:9000`.
+
+**Se não conectar**
+
+| Sintoma | Causa provável | Solução |
+|---|---|---|
+| Cliente demora e dá timeout | Firewall da máquina do servidor bloqueando a porta | Permita o Python no Firewall do Windows para redes privadas, ou libere a porta do `SERVER_PORT` |
+| Timeout mesmo com o firewall liberado | A rede (ex.: Wi-Fi da faculdade) bloqueia comunicação entre aparelhos | Use um hotspot de celular |
+| `Connection refused` | Servidor não está rodando ou está com `SERVER_BIND_HOST=127.0.0.1` | Confira o `.env` do servidor e reinicie |
+| `certificado pinado não encontrado` | `server.crt` não foi copiado para o cliente | Copie para `certs/server.crt` ou ajuste `PINNED_CERT_PATH` |
 
 ### Com Docker
 
