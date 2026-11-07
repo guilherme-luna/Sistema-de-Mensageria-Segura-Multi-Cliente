@@ -126,3 +126,19 @@ async def connect(port: int, cert: x509.Certificate, name: str, client_id: Optio
         writer.close()
         raise
     return Connected(client, reader, writer)
+
+
+async def next_frame(conn: Connected, timeout: float = 2) -> Frame:
+    frame = await asyncio.wait_for(read_frame(conn.reader), timeout)
+    assert frame is not None, "o servidor encerrou a conexão"
+    return frame
+
+
+async def process(conn: Connected, count: int) -> list[Frame]:
+    """Lê count frames e os entrega ao cliente, como o laço principal faria."""
+    frames = []
+    for _ in range(count):
+        frame = await next_frame(conn)
+        conn.client.handle_frame(frame)
+        frames.append(frame)
+    return frames
