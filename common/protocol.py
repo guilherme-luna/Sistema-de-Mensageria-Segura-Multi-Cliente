@@ -5,6 +5,7 @@ configuráveis por variável de ambiente.
 """
 
 import re
+from dataclasses import dataclass
 from enum import IntEnum
 
 CLIENT_ID_LEN = 16       # UUID v4 binário
@@ -55,3 +56,42 @@ _NAME_RE = re.compile(rf"[A-Za-z0-9_-]{{1,{MAX_NAME_LEN}}}")
 
 def is_valid_name(name: str) -> bool:
     return _NAME_RE.fullmatch(name) is not None
+
+
+class E2EFrameError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class E2EFrame:
+    """Corpo de um frame E2E: nonce | sender_id | recipient_id | seq_no | ciphertext+tag"""
+
+    nonce: bytes
+    sender_id: bytes
+    recipient_id: bytes
+    seq_no: int
+    ciphertext: bytes
+
+    def encode(self) -> bytes:
+        return b"".join((
+            self.nonce,
+            self.sender_id,
+            self.recipient_id,
+            self.seq_no.to_bytes(SEQ_NO_LEN, "big"),
+            self.ciphertext,
+        ))
+
+    @classmethod
+    def parse(cls, body: bytes) -> "E2EFrame":
+        if not E2E_HEADER_LEN + GCM_TAG_LEN <= len(body) <= MAX_E2E_FRAME_LEN:
+            raise E2EFrameError(f"tamanho de frame E2E inválido: {len(body)}")
+        sender_start = NONCE_LEN
+        recipient_start = sender_start + CLIENT_ID_LEN
+        seq_start = recipient_start + CLIENT_ID_LEN
+        return cls(
+            nonce=body[:sender_start],
+            sender_id=body[sender_start:recipient_start],
+            recipient_id=body[recipient_start:seq_start],
+            seq_no=int.from_bytes(body[seq_start:E2E_HEADER_LEN], "big"),
+            ciphertext=body[E2E_HEADER_LEN:],
+        )
