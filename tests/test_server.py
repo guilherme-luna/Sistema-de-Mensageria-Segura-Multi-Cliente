@@ -1,24 +1,16 @@
 import asyncio
-from pathlib import Path
 
-from common.config import ServerConfig
+import pytest
+from helpers import make_config, running_server
+
+from common.crypto import CryptoError
 from common.framing import encode_error
 from common.protocol import ErrorCode
 from server.server import RelayServer
 
 
-def make_config(max_clients: int) -> ServerConfig:
-    return ServerConfig(
-        bind_host="127.0.0.1", port=0, max_clients=max_clients, handshake_timeout=10,
-        key_path=Path("unused.key"), cert_path=Path("unused.crt"), log_level="INFO",
-    )
-
-
-async def test_refuses_with_error_when_full():
-    relay = RelayServer(make_config(max_clients=1))
-    server = await asyncio.start_server(relay.handle_connection, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    async with server:
+async def test_refuses_with_error_when_full(identity):
+    async with running_server(identity, max_clients=1) as (_, port):
         _, first = await asyncio.open_connection("127.0.0.1", port)
         await asyncio.sleep(0.05)  # garante que a primeira conexão foi registrada
 
@@ -29,3 +21,10 @@ async def test_refuses_with_error_when_full():
         for writer in (first, second):
             writer.close()
             await writer.wait_closed()
+
+
+def test_refuses_key_that_does_not_match_certificate(identity, other_identity):
+    key, _ = identity
+    _, other_cert = other_identity
+    with pytest.raises(CryptoError):
+        RelayServer(make_config(), key, other_cert)

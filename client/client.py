@@ -1,7 +1,7 @@
 """Cliente CLI da mensageria segura.
 
-Esqueleto de infraestrutura. Handshake, tabela de peers e cifra E2E vêm nas
-próximas fases.
+O cliente gera um par X25519 efêmero a cada conexão e só confia no servidor se o
+certificado recebido for idêntico ao pinado e a assinatura do handshake conferir.
 """
 
 import argparse
@@ -9,15 +9,80 @@ import asyncio
 import logging
 import uuid
 from dataclasses import replace
+from typing import Optional
 
+from cryptography import x509
+
+from common import crypto
 from common.config import ClientConfig, ConfigError, load_client_config
-from common.log import force_utf8_output, setup_logging
-from common.protocol import MAX_NAME_LEN, is_valid_name
+from common.framing import Frame, FrameError, encode_frame, read_frame
+from common.log import fingerprint, force_utf8_output, setup_logging
+from common.messages import Hello, HelloResp, MessageError
+from common.protocol import MAX_NAME_LEN, ErrorCode, MsgType, is_valid_name
 
 log = logging.getLogger("client")
 
+HANDSHAKE_TIMEOUT = 10
+
+
+class HandshakeError(Exception):
+    pass
+
+
+def describe_error(frame: Frame) -> str:
+    try:
+        return ErrorCode(frame.body[0]).name if len(frame.body) == 1 else "frame de erro malformado"
+    except ValueError:
+        return f"código desconhecido {frame.body[0]:#04x}"
+
+
+class ChatClient:
+    def __init__(self, pinned_cert: x509.Certificate, name: str, client_id: bytes):
+        self.pinned_cert = pinned_cert
+        self.name = name
+        self.client_id = client_id
+        # Par efêmero: existe só em memória e só nesta conexão (forward secrecy)
+        self._sk, self.pk = crypto.generate_x25519_keypair()
+        self.session_salt: Optional[bytes] = None
+        self.server_key = None
+
+    async def handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Envia HELLO e autentica o servidor pelo HELLO_RESP. Levanta HandshakeError ou CryptoError."""
+        writer.write(encode_frame(MsgType.HELLO, Hello(self.client_id, self.pk, self.name).encode()))
+        await writer.drain()
+
+        try:
+            frame = await asyncio.wait_for(read_frame(reader), HANDSHAKE_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise HandshakeError("o servidor não respondeu ao HELLO") from None
+        except FrameError as e:
+            raise HandshakeError(f"resposta inválida do servidor: {e}") from None
+        if frame is None:
+            raise HandshakeError("o servidor encerrou a conexão")
+        if frame.msg_type == MsgType.ERROR:
+            raise HandshakeError(f"o servidor recusou o handshake: {describe_error(frame)}")
+        if frame.msg_type != MsgType.HELLO_RESP:
+            raise HandshakeError(f"esperado HELLO_RESP, recebido {frame.msg_type.name}")
+        try:
+            resp = HelloResp.parse(frame.body)
+        except MessageError as e:
+            raise HandshakeError(f"HELLO_RESP malformado: {e}") from None
+
+        # A chave de verificação vem do certificado pinado, nunca dos bytes recebidos
+        key = crypto.verify_pinned_certificate(self.pinned_cert, resp.certificate)
+        material = crypto.handshake_material(crypto.public_key_der(key), self.pk, self.client_id, resp.salt)
+        crypto.verify_pss(key, resp.signature, material)
+        self.server_key = key
+        self.session_salt = resp.salt
+
 
 async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
+    try:
+        pinned = crypto.load_certificate(config.pinned_cert_path)
+    except crypto.CryptoError as e:
+        raise SystemExit(str(e)) from None
+    client = ChatClient(pinned, name, client_id.bytes)
+
     try:
         reader, writer = await asyncio.open_connection(config.host, config.port)
     except OSError as e:
@@ -25,11 +90,23 @@ async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
 
     log.info("%s (%s) conectado a %s:%d", name, client_id, config.host, config.port)
     try:
-        # TODO(fase 3): validar certificado pinado, handshake, peers e CLI
+        try:
+            await client.handshake(reader, writer)
+        except crypto.AuthenticationError as e:
+            raise SystemExit(f"servidor NÃO autenticado, conexão abortada: {e}") from None
+        except (HandshakeError, crypto.CryptoError) as e:
+            raise SystemExit(f"falha no handshake: {e}") from None
+        log.info("servidor autenticado; chave efêmera %s", fingerprint(client.pk))
+        # TODO(fase 2): tabela de peers a partir dos PEER_JOIN/PEER_LEAVE assinados
         await reader.read()
+    except ConnectionError:
+        pass
     finally:
         writer.close()
-        await writer.wait_closed()
+        try:
+            await writer.wait_closed()
+        except ConnectionError:
+            pass
         log.info("desconectado")
 
 

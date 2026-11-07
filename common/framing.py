@@ -33,13 +33,14 @@ def encode_error(code: ErrorCode) -> bytes:
     return encode_frame(MsgType.ERROR, bytes([code]))
 
 
-async def read_frame(reader: asyncio.StreamReader) -> Optional[Frame]:
+async def read_frame(reader: asyncio.StreamReader, max_len: int = MAX_FRAME_LEN) -> Optional[Frame]:
     """Lê um frame do stream. Retorna None se a conexão fechou entre dois frames.
 
     Levanta FrameError para qualquer frame inválido; quem chama deve encerrar a
     conexão. O tamanho é validado antes da leitura, para que um prefixo forjado
     não faça o processo reservar memória. Não aplica timeout: quem chama deve
-    usar asyncio.wait_for onde um peer lento for um problema.
+    usar asyncio.wait_for onde um peer lento for um problema. max_len (tipo + corpo)
+    permite um limite menor que MAX_FRAME_LEN, como antes do handshake.
     """
     try:
         prefix = await reader.readexactly(LENGTH_PREFIX_LEN)
@@ -49,7 +50,7 @@ async def read_frame(reader: asyncio.StreamReader) -> Optional[Frame]:
         raise FrameError("conexão encerrada no meio do prefixo de tamanho") from None
 
     (length,) = _LENGTH.unpack(prefix)
-    if not 1 <= length <= MAX_FRAME_LEN:
+    if not 1 <= length <= min(max_len, MAX_FRAME_LEN):
         raise FrameError(f"tamanho de frame inválido: {length}")
 
     try:

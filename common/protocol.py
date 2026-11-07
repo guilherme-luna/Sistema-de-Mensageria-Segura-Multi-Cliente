@@ -47,6 +47,7 @@ class ErrorCode(IntEnum):
     NAME_TAKEN = 0x04
     INVALID_NAME = 0x05
     UNKNOWN_RECIPIENT = 0x06
+    ID_TAKEN = 0x07
 
 
 # Nome exibido do cliente: ASCII simples, sem espaços, para funcionar em "/msg <nome> <texto>"

@@ -110,10 +110,10 @@ Todo frame em TCP começa com o tamanho (4 bytes, big-endian, contando tipo + co
 
 | Tipo | Valor | Direção | Corpo |
 |---|:---:|---|---|
-| `HELLO` | `0x01` | cliente → servidor | client_id + pk_client + nome |
-| `HELLO_RESP` | `0x02` | servidor → cliente | certificado + salt + assinatura |
-| `PEER_JOIN` | `0x03` | servidor → cliente | client_id + pk + nome do peer + salt_AB + seq_send + assinatura |
-| `PEER_LEAVE` | `0x04` | servidor → cliente | client_id do peer + seq_send + assinatura |
+| `HELLO` | `0x01` | cliente → servidor | client_id (16) + pk_client (32) + nome (1–32, ASCII) |
+| `HELLO_RESP` | `0x02` | servidor → cliente | tamanho do certificado (2) + certificado DER + salt (16) + assinatura |
+| `PEER_JOIN` | `0x03` | servidor → cliente | client_id (16) + pk (32) + salt_AB (16) + seq_send (8) + papel (1) + tamanho do nome (1) + nome + assinatura |
+| `PEER_LEAVE` | `0x04` | servidor → cliente | client_id do peer (16) + seq_send (8) + assinatura |
 | `E2E` | `0x10` | cliente → cliente (relay) | frame E2E abaixo |
 | `ERROR` | `0x7F` | servidor → cliente | código de erro (1 B) |
 
@@ -144,6 +144,10 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 | 7 | Certificado | Cada integrante gera o seu; nada em `certs/` é versionado. Na apresentação, servidor e clientes rodam no mesmo notebook |
 | 8 | Nome do cliente | Enviado no `HELLO` e repassado no `PEER_JOIN` assinado. De 1 a 32 caracteres `[A-Za-z0-9_-]`; o servidor recusa nomes repetidos |
 | 9 | `client_id` | UUID v4 novo a cada execução; `--id <uuid>` reutiliza um id (teste de reconexão) |
+| 10 | Material assinado de `PEER_JOIN`/`PEER_LEAVE` | `tipo ‖ recipient_id ‖ salt do HELLO_RESP ‖ campos`: a assinatura não serve para outro tipo de mensagem, outro destinatário nem outra conexão |
+| 11 | Papel no par | O `PEER_JOIN` leva um byte assinado dizendo se o destinatário é A ou B, aplicando a decisão 3 sem depender da ordem de chegada |
+| 12 | `client_id` repetido | Se o id já está conectado, o servidor recusa o novo `HELLO` (`ID_TAKEN`) em vez de derrubar a sessão existente |
+| 13 | Antes do handshake | Só um `HELLO` é aceito, com tamanho máximo de um `HELLO` e prazo de `HANDSHAKE_TIMEOUT` segundos |
 
 ---
 
