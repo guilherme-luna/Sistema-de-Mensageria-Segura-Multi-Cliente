@@ -4,6 +4,8 @@ O cliente gera um par X25519 efêmero a cada conexão e só confia no servidor s
 certificado recebido for idêntico ao pinado e a assinatura do handshake conferir.
 Depois disso, só aceita anúncios de peers (PEER_JOIN/PEER_LEAVE) assinados pelo
 servidor para esta conexão, e deriva as chaves E2E de cada par localmente.
+
+O texto das mensagens nunca vai para o log: só é devolvido a quem chamou, para exibir.
 """
 
 import argparse
@@ -20,7 +22,7 @@ from common.config import ClientConfig, ConfigError, load_client_config
 from common.framing import Frame, FrameError, encode_frame, read_frame
 from common.log import fingerprint, force_utf8_output, setup_logging
 from common.messages import Hello, HelloResp, MessageError, PeerJoin, PeerLeave, Role
-from common.protocol import MAX_NAME_LEN, ErrorCode, MsgType, is_valid_name
+from common.protocol import MAX_NAME_LEN, MAX_PLAINTEXT_LEN, E2EFrame, E2EFrameError, ErrorCode, MsgType, is_valid_name
 
 log = logging.getLogger("client")
 
@@ -35,6 +37,20 @@ class ProtocolError(Exception):
     """O servidor mandou algo fora do protocolo; a conexão deve ser encerrada."""
 
 
+class MessageRejected(Exception):
+    """Frame E2E descartado (adulterado, repetido ou de remetente desconhecido); a conexão continua."""
+
+
+class SendError(ValueError):
+    """Mensagem que não pode ser enviada (peer desconhecido, texto vazio ou longo demais)."""
+
+
+@dataclass(frozen=True)
+class ChatMessage:
+    sender: str
+    text: str
+
+
 @dataclass
 class Peer:
     client_id: bytes
@@ -44,6 +60,10 @@ class Peer:
     # Chaves E2E do par: nunca aparecem em repr nem em logs
     send_key: bytes = field(repr=False)
     recv_key: bytes = field(repr=False)
+    # IV_base deste lado para este par. O do peer não é guardado: vem em cada nonce (decisão 5)
+    iv_base: bytes = field(default_factory=crypto.random_iv_base, repr=False)
+    send_seq: int = 0  # último seq_no enviado; incrementado ANTES de cifrar, o primeiro é 1
+    recv_seq: int = 0  # último seq_no aceito; só aceita seq_no maior (anti-replay)
 
     @property
     def label(self) -> str:
@@ -100,16 +120,22 @@ class ChatClient:
 
     # --- Mensagens depois do handshake ---
 
-    def handle_frame(self, frame: Frame) -> None:
-        """Processa um frame do servidor. Levanta ProtocolError ou AuthenticationError para encerrar."""
+    def handle_frame(self, frame: Frame) -> Optional[ChatMessage]:
+        """Processa um frame do servidor e devolve a mensagem recebida, se houver.
+
+        Levanta ProtocolError ou AuthenticationError quando a conexão deve ser encerrada.
+        Um frame E2E inválido é só descartado (com aviso no log), sem derrubar a conexão.
+        """
         try:
             if frame.msg_type == MsgType.PEER_JOIN:
                 self._on_peer_join(PeerJoin.parse(frame.body))
             elif frame.msg_type == MsgType.PEER_LEAVE:
                 self._on_peer_leave(PeerLeave.parse(frame.body))
             elif frame.msg_type == MsgType.E2E:
-                # TODO(fase 3): decifrar com recv_key, anti-replay e exibir
-                log.debug("frame E2E recebido, %d bytes", len(frame.body))
+                try:
+                    return self.decrypt(frame.body)
+                except MessageRejected as e:
+                    log.warning("frame E2E rejeitado: %s", e)
             elif frame.msg_type == MsgType.ERROR:
                 log.warning("erro do servidor: %s", describe_error(frame))
             else:
@@ -143,6 +169,47 @@ class ChatClient:
         if peer is not None:
             log.info("peer %s saiu", peer.label)
 
+    # --- Mensagens E2E ---
+
+    def peer_by_name(self, name: str) -> Optional[Peer]:
+        return next((p for p in self.peers.values() if p.name == name), None)
+
+    def encrypt(self, peer_name: str, text: str) -> bytes:
+        """Cifra text para o peer e devolve o frame TCP pronto para enviar ao servidor."""
+        peer = self.peer_by_name(peer_name)
+        if peer is None:
+            raise SendError(f"peer {peer_name!r} não está conectado")
+        plaintext = text.encode("utf-8")
+        if not plaintext:
+            raise SendError("mensagem vazia")
+        if len(plaintext) > MAX_PLAINTEXT_LEN:
+            raise SendError(f"mensagem com {len(plaintext)} bytes excede o limite de {MAX_PLAINTEXT_LEN}")
+        # Incrementa antes de cifrar: um erro depois daqui nunca leva a reusar o mesmo nonce
+        peer.send_seq += 1
+        e2e = crypto.seal_e2e(peer.send_key, peer.iv_base, self.client_id, peer.client_id, peer.send_seq, plaintext)
+        return encode_frame(MsgType.E2E, e2e.encode())
+
+    def decrypt(self, body: bytes) -> ChatMessage:
+        """Valida e decifra um frame E2E. Levanta MessageRejected sem alterar o estado do peer."""
+        try:
+            e2e = E2EFrame.parse(body)
+        except E2EFrameError as e:
+            raise MessageRejected(str(e)) from None
+        if e2e.recipient_id != self.client_id:
+            raise MessageRejected("frame destinado a outro cliente")
+        peer = self.peers.get(e2e.sender_id)
+        if peer is None:
+            raise MessageRejected("remetente desconhecido")
+        try:
+            plaintext = crypto.open_e2e(peer.recv_key, e2e)
+        except crypto.AuthenticationError as e:
+            raise MessageRejected(f"de {peer.label}: {e} (frame adulterado)") from None
+        # O seq_no está no AAD, então só é confiável depois de a tag conferir
+        if e2e.seq_no <= peer.recv_seq:
+            raise MessageRejected(f"de {peer.label}: seq_no {e2e.seq_no} já visto (replay)")
+        peer.recv_seq = e2e.seq_no
+        return ChatMessage(peer.name, plaintext.decode("utf-8", errors="replace"))
+
 
 async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
     try:
@@ -167,7 +234,10 @@ async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
         log.info("servidor autenticado; chave efêmera %s", fingerprint(client.pk))
         # TODO(fase 3): CLI (/peers, /msg, /quit) lendo o teclado em paralelo
         while (frame := await read_frame(reader)) is not None:
-            client.handle_frame(frame)
+            message = client.handle_frame(frame)
+            if message is not None:
+                # Na tela, nunca no log (política de logs)
+                print(f"[{message.sender}] {message.text}", flush=True)
         log.info("o servidor encerrou a conexão")
     except crypto.AuthenticationError as e:
         log.error("mensagem do servidor NÃO autenticada, conexão abortada: %s", e)
