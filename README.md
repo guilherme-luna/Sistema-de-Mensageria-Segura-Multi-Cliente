@@ -247,6 +247,79 @@ O nome aceita de 1 a 32 caracteres entre letras, números, `_` e `-`. A cada exe
 | `/msg <nome> <texto>` | envia uma mensagem E2E |
 | `/quit` | desconecta |
 
+### CLI do cliente — Tarefa 1
+
+O cliente recebe mensagens enquanto espera comandos. `/peers` mostra o nome e o
+UUID de cada outro participante; sem participantes, mostra um aviso. Use, por exemplo,
+`/msg bob Olá, Bob!` no terminal de Alice e `/msg alice Olá, Alice!` no de Bob.
+Uma mensagem recebida aparece como `[alice] Olá, Bob!`, somente na tela.
+Comandos desconhecidos, vazios ou incompletos mostram a ajuda. Um destinatário
+ausente ou uma mensagem acima de 4096 bytes gera um aviso e permite tentar novamente.
+
+`/quit`, fim da entrada (EOF) ou desconexão do servidor encerram a sessão. Para
+verificar o último caso, pare o servidor enquanto os clientes aguardam o teclado:
+eles devem sair sem precisar pressionar Enter. No Windows, EOF pode ser informado
+com Ctrl+Z e Enter; Ctrl+C também encerra o programa.
+
+**Como o código está organizado:**
+
+- `parse_command()` interpreta a linha sem usar rede nem alterar o cliente.
+- `read_commands()` lista participantes ou usa `encrypt()`, `writer.write()` e
+  `writer.drain()` para enviar; trata `SendError` na tela.
+- `receive_messages()` processa os frames e mostra as mensagens com `print()`.
+- `chat()` executa os dois laços e, quando um termina, cancela e aguarda o outro.
+  `run()` mantém o handshake e o fechamento da conexão no seu `finally`.
+- `_terminal_input()` adapta a leitura bloqueante: `read_commands()` usa
+  `await asyncio.to_thread(input)` com esse adaptador. Uma thread daemon lê o
+  `input()` original e uma fila entrega a linha. Um evento libera a espera do
+  executor em até 50 ms ao encerrar. Isso evita que `asyncio.run()` fique preso
+  esperando o executor depois da queda do servidor, inclusive no Windows. A thread
+  daemon que ainda espera Enter não impede a saída do processo; a CLI é destinada
+  a uma sessão por processo.
+
+**Validação:** execute na raiz, no PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m ensurepip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q tests/test_cli.py
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+`tests/test_cli.py` cobre interpretação, listagem, envio E2E, recuperação após
+erro, recepção durante espera pelo teclado, saída/EOF, cancelamento, limpeza da
+conexão e encerramento de um processo com a entrada ainda aberta. Os testes de
+rede usam certificados temporários em memória, sem gerar chaves no repositório.
+
+**Validação concluída no terminal local (Windows, Python 3.14):**
+
+- `ruff check .`: `All checks passed!`.
+- `pytest -q`: **200 passed in 3.24s**, incluindo os 27 testes de CLI.
+
+Inicialmente, o ambiente do assistente não tinha as dependências e não conseguiu
+instalá-las por falha de DNS. Depois, a instalação e os checks completos foram
+executados com sucesso pelo integrante no terminal local. Não há execução da
+suíte anterior às mudanças para comparação; a suíte atual completa passou.
+
+**Para explicar na apresentação:** “O cliente tem duas tarefas: uma recebe a rede
+e outra lê o teclado. O comando de envio usa a criptografia que já existia.
+Se houver erro de envio, mostramos o aviso e continuamos. Quando o usuário sai
+ou o servidor desconecta, encerramos as tarefas e fechamos a conexão.”
+
+**Ponto de versionamento:** esta etapa altera somente `client/client.py`,
+`tests/test_cli.py`, `README.md` e `README_OQFALTA.md`. A branch
+`feat/cli-cliente` já foi criada a partir de `integracao`, e os checks passaram.
+Após revisar, registre o commit com os comandos abaixo:
+
+```powershell
+git diff --check
+git add client/client.py tests/test_cli.py README.md README_OQFALTA.md
+git commit -m "feat: implementa comandos do cliente no terminal"
+```
+
+O destino previsto do PR é `integracao`. As tarefas seguintes não foram iniciadas.
+
 ### Em máquinas diferentes (mesma rede)
 
 Todas as máquinas precisam estar na mesma rede (mesmo Wi-Fi ou hotspot).

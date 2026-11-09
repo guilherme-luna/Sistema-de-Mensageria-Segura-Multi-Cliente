@@ -32,7 +32,7 @@ ruff check . && pytest -q         # tudo deve passar antes de você mexer em alg
 | Cliente | `client/client.py` | autentica o servidor, verifica `PEER_JOIN`/`PEER_LEAVE`, deriva as chaves por par, `encrypt()` / `decrypt()` com anti-replay |
 | Testes | `tests/` | 173 testes: vetores oficiais, handshake, MITM, rendezvous, relay, bitflip e replay |
 
-**O que ainda não funciona:** o cliente não lê o teclado. Ele conecta, autentica e mostra mensagens recebidas, mas ainda não há como enviar pelo terminal.
+**Atualização — Tarefa 1:** a CLI foi implementada com leitura simultânea do teclado e da rede. Veja a seção de CLI no `README.md`. Validação completa aprovada no terminal local: `ruff` sem erros e 200 testes passando.
 
 Utilitários úteis nos testes (`tests/helpers.py`):
 - `running_server(identity)`: sobe o servidor numa porta livre;
@@ -46,19 +46,23 @@ Utilitários úteis nos testes (`tests/helpers.py`):
 
 ### Tarefa 1 — CLI do cliente (fase 3, a mais importante)
 
-**Onde:** `client/client.py`, função `run()`, no `TODO(fase 3)`.
+**Onde:** `client/client.py`: `parse_command()`, `read_commands()`, `receive_messages()`, `chat()` e `run()`.
 
-Hoje `run()` só fica num laço lendo frames do servidor. Falta ler o teclado **ao mesmo tempo**:
+Implementação da CLI concluída e validada:
 
-- [ ] Rodar duas tarefas em paralelo: uma lendo frames (o laço que já existe) e outra lendo linhas do teclado. No Windows, `input()` bloqueia; use `await asyncio.to_thread(input)` para não travar o laço.
-- [ ] `/peers`: listar `client.peers.values()` (nome e `client_id`).
-- [ ] `/msg <nome> <texto>`: `writer.write(client.encrypt(nome, texto))` e `await writer.drain()`. Tratar `SendError` mostrando a mensagem, sem encerrar.
-- [ ] `/quit`: fechar a conexão e sair.
-- [ ] Comando desconhecido: mostrar a ajuda.
-- [ ] Quando uma tarefa terminar (servidor caiu ou `/quit`), cancelar a outra.
-- [ ] Testes em `tests/test_cli.py`: separar a interpretação do comando numa função pura (ex.: `parse_command(linha)`) e testá-la sem rede.
+- [x] Rodar duas tarefas em paralelo: uma lendo frames (o laço que já existe) e outra lendo linhas do teclado. No Windows, `input()` bloqueia; use `await asyncio.to_thread(input)` para não travar o laço.
+- [x] `/peers`: listar `client.peers.values()` (nome e `client_id`).
+- [x] `/msg <nome> <texto>`: `writer.write(client.encrypt(nome, texto))` e `await writer.drain()`. Tratar `SendError` mostrando a mensagem, sem encerrar.
+- [x] `/quit`: fechar a conexão e sair.
+- [x] Comando desconhecido: mostrar a ajuda.
+- [x] Quando uma tarefa terminar (servidor caiu ou `/quit`), cancelar a outra.
+- [x] Testes em `tests/test_cli.py`: separar a interpretação do comando numa função pura (ex.: `parse_command(linha)`) e cobri-la sem rede; foram acrescentados também testes de CLI com rede e de encerramento em subprocesso.
 
 **Regra:** o texto das mensagens vai para a tela com `print()`, **nunca** para o `log`.
+
+**Validação desta etapa:** no terminal local do integrante, após instalar as dependências, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **200 passed in 3.24s** (27 testes de CLI). Inicialmente, o ambiente do assistente não tinha as dependências e a instalação falhou por DNS; não há resultado da suíte anterior às mudanças para comparação. A suíte atual completa está aprovada. As tarefas seguintes não foram iniciadas.
+
+**Git:** base `integracao` (commit `891f963`); branch atual `feat/cli-cliente`, criada pelo integrante no terminal local. Mudanças prontas para revisão e commit, sem commit, push ou PR automático. O fluxo está no `README.md`.
 
 ### Tarefa 2 — Ajustes já aprovados na revisão
 
