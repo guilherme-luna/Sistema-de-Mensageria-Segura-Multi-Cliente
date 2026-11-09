@@ -454,17 +454,70 @@ docker compose run --rm client --name alice     # cliente, em outro terminal
 
 ## 🧪 Testes
 
+Na raiz do projeto, com as dependências de desenvolvimento instaladas:
+
 ```bash
-pytest -v
+python -m ruff check .
+python -m pytest -q
 ```
 
-Os testes cobrem os cenários obrigatórios:
+| Cobertura | Arquivo principal | O que é verificado |
+|---|---|---|
+| Troca de mensagens E2E | `tests/test_e2e.py` | Dois ou mais clientes, ambas as direções, texto e limites de envio |
+| Adulteração e replay | `tests/test_e2e.py` | Falha de autenticação, contador repetido e continuidade após descarte |
+| Reconexão completa | `tests/test_scenarios.py` | Mesmo UUID e nome, nova chave efêmera, novas chaves por direção, contadores reiniciados e mensagens nas duas direções |
+| Mensagem da sessão anterior | `tests/test_scenarios.py` | Ciphertext antigo é rejeitado após reconexão sem impedir mensagens novas |
+| Framing inválido após autenticação | `tests/test_scenarios.py` | Tamanho zero, acima do limite, tamanho forjado, tipo desconhecido, prefixo incompleto e corpo incompleto |
+| Isolamento do erro de framing | `tests/test_scenarios.py` | `BAD_FRAME`, encerramento só do infrator, `PEER_LEAVE` e outros dois clientes continuam conversando |
+| Handshake e distribuição de chaves | `tests/test_handshake.py`, `tests/test_rendezvous.py` | Certificado pinado, assinaturas, papéis e anúncios de participantes |
+| CLI e configuração | `tests/test_cli.py`, `tests/test_config.py` | Comandos, encerramento, variáveis e timeout |
+| Destinatário sem leitura | `tests/test_server_buffers.py` | Limite de 1 MiB e continuidade dos clientes restantes |
 
-- ✅ troca de mensagens E2E entre 2+ clientes
-- 🧨 frame adulterado (bitflip) → rejeitado por falha na tag GCM
-- 🔁 frame reenviado (replay) → rejeitado por `seq_no` repetido
-- 🚫 framing inválido → erro e desconexão segura
-- 🔌 reconexão com o mesmo `client_id` → handshake completo e chaves novas
+Para demonstrar somente os cenários da Tarefa 3 (sete casos):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v tests/test_scenarios.py
+```
+
+No Linux, use `python -m pytest -v tests/test_scenarios.py` com o ambiente ativo.
+Os testes usam conexões TCP locais, portas livres e certificados temporários em
+memória; não exigem servidor aberto manualmente nem certificados gerados em `certs/`.
+O teste de reconexão passa a `connect()` o UUID anterior, equivalente ao uso de
+`--id` na CLI. Os frames incompletos encerram somente o envio (EOF) para que o
+servidor possa detectar a interrupção e ainda responder com `BAD_FRAME`.
+
+**Para explicar na apresentação:** “Testamos que um cliente pode sair e voltar
+com a mesma identificação, mas usando chaves novas. A conversa funciona nos dois
+sentidos e uma mensagem antiga deixa de ser válida. Também enviamos frames
+inválidos: só quem enviou é desconectado; os outros dois continuam conversando.”
+
+**Validação da Tarefa 3:** `ruff check .` aprovado e **232 testes passaram em 2,12 s**
+no ambiente Linux/Python 3.12. A base foi verificada antes das alterações: `ruff`
+aprovado e 225 testes passando, sem falhas anteriores. Os sete testes novos
+também passaram isoladamente. Após a aplicação direta na pasta do VS Code,
+a execução no Windows/Python 3.14 também passou: **232 testes em 5,56 s**,
+com `ruff check .` e `git diff --check` aprovados.
+
+**Tarefa 3:** foram adicionados somente testes e documentação. O protocolo,
+a criptografia e o código de execução do cliente e do servidor foram preservados.
+A base usada foi `52d3132`, da branch `feat/ajustes-seguranca`; o destino previsto
+do PR continua sendo `integracao`, após a integração das etapas anteriores.
+
+Ponto de versionamento, depois de validar no terminal local:
+
+```powershell
+git switch -c test/cenarios-ponta-a-ponta
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+git diff --check
+git add tests/test_scenarios.py README.md README_OQFALTA.md
+git commit -m "test: valida reconexao e isolamento de framing invalido"
+```
+
+A criação da branch pelo assistente foi bloqueada pela permissão de escrita em
+`.git`; os arquivos foram aplicados diretamente na pasta conectada ao VS Code,
+sem commit, sobre `feat/ajustes-seguranca`. Crie a branch pelo terminal local.
+Não foram feitos commit, push ou PR automaticamente. A Tarefa 4 não foi iniciada.
 
 ---
 

@@ -30,7 +30,7 @@ ruff check . && pytest -q         # tudo deve passar antes de você mexer em alg
 | Mensagens de controle | `common/messages.py` | `Hello`, `HelloResp`, `PeerJoin`, `PeerLeave` com `encode()` / `parse()` e o material assinado |
 | Servidor | `server/server.py` | handshake assinado, tabela `sessions`, anúncio de peers com `salt_AB` por par, relay por `recipient_id` |
 | Cliente | `client/client.py` | autentica o servidor, verifica `PEER_JOIN`/`PEER_LEAVE`, deriva as chaves por par, `encrypt()` / `decrypt()` com anti-replay |
-| Testes | `tests/` | 173 testes: vetores oficiais, handshake, MITM, rendezvous, relay, bitflip e replay |
+| Testes | `tests/` | Vetores oficiais, handshake, MITM, rendezvous, relay, CLI, buffer, bitflip, replay e cenários ponta a ponta |
 
 **Atualização — Tarefa 1:** a CLI foi implementada com leitura simultânea do teclado e da rede. Veja a seção de CLI no `README.md`. Validação completa aprovada no terminal local: `ruff` sem erros e 200 testes passando.
 
@@ -74,15 +74,19 @@ Implementação concluída e validação completa aprovada no terminal local:
 
 **Validação:** no terminal local, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **225 passed in 3.67s**. Inclui os testes assíncronos novos e a conexão real que para de ler, sem prejudicar os outros clientes. O bloqueio do event loop no ambiente do assistente não ocorreu no terminal local.
 
-**Git:** branch `feat/ajustes-seguranca` criada pelo integrante. O commit `512a6ef` já contém parte da etapa (cliente e documentação), apesar da mensagem da CLI. Os arquivos restantes e o registro da validação estão prontos para revisão e commit. Sem commit, push ou PR automático. A Tarefa 3 ainda não foi iniciada.
+**Git:** branch `feat/ajustes-seguranca` criada pelo integrante. O commit `512a6ef` já contém parte da etapa (cliente e documentação), apesar da mensagem da CLI. A etapa foi publicada pelo integrante no commit `52d3132` da branch `feat/ajustes-seguranca`, usado como base da Tarefa 3.
 
 ### Tarefa 3 — Cenários obrigatórios ponta a ponta (fase 4)
 
-Bitflip e replay já são rejeitados e testados em `tests/test_e2e.py`. Falta:
+- [x] **Reconexão com troca de mensagens:** `tests/test_scenarios.py::test_reconnection_exchanges_messages_with_fresh_keys` troca mensagens antes e depois de sair e voltar com o mesmo UUID/nome. Confere chave efêmera e chaves por direção novas, correspondência entre os lados, contadores reiniciados e rejeição de ciphertext da sessão antiga.
+- [x] **Framing inválido depois do handshake:** `tests/test_scenarios.py::test_invalid_framing_disconnects_only_offender` cobre seis casos: tamanho zero, acima do limite, tamanho forjado, tipo desconhecido, prefixo incompleto e corpo incompleto. Confere `BAD_FRAME`, EOF, saída do infrator e mensagens nas duas direções entre os clientes restantes.
+- [x] **README revisado:** a seção “Testes” descreve os cenários e arquivos existentes, os comandos para execução e a explicação curta para apresentação.
 
-- [ ] **Reconexão com troca de mensagens:** cliente sai, volta com o mesmo `--id`, e os dois trocam mensagens com as chaves novas. Base: `test_reconnection_gets_fresh_keys` em `tests/test_rendezvous.py`.
-- [ ] **Framing inválido depois do handshake** derruba só aquele cliente e os outros continuam conversando.
-- [ ] Conferir se a seção "Testes" do `README.md` corresponde aos testes que existem.
+**Escopo:** apenas `tests/test_scenarios.py`, `README.md` e `README_OQFALTA.md`. Sem mudanças no protocolo, na criptografia ou no código de execução.
+
+**Validação:** a base `52d3132` passou em `ruff` e nos 225 testes originais. Os sete casos novos passaram isoladamente; a suíte completa final passou com **232 testes em 2,12 s**, e `ruff check .` foi aprovado. Após aplicação direta no VS Code, validado também no Windows/Python 3.14: **232 testes passaram em 5,56 s**, com `ruff check .` e `git diff --check` aprovados.
+
+**Git:** arquivos aplicados diretamente na pasta do VS Code, sobre `feat/ajustes-seguranca` (`52d3132`). A criação de `test/cenarios-ponta-a-ponta` pelo assistente foi bloqueada pela permissão em `.git`; crie a branch pelo terminal local. Commit sugerido `test: valida reconexao e isolamento de framing invalido`, destino do PR `integracao` após as etapas anteriores. Sem commit, push ou PR automático. A Tarefa 4 não foi iniciada.
 
 ### Tarefa 4 — Proxy MITM para a demonstração (fase 5)
 
