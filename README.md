@@ -2,7 +2,7 @@
 
 # 🔐 Sistema de Mensageria Segura Multi-Cliente
 
-Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servidor funciona só como *relay*: ele autentica o handshake e distribui as chaves públicas, mas **não tem como decifrar** as mensagens trocadas entre os clientes.
+Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servidor funciona só como *relay*: ele autentica o handshake e distribui as chaves públicas; **um servidor honesto não consegue decifrar** as mensagens trocadas entre os clientes.
 
 [![CI](https://github.com/guilherme-luna/Sistema-de-Mensageria-Segura-Multi-Cliente/actions/workflows/ci.yml/badge.svg)](https://github.com/guilherme-luna/Sistema-de-Mensageria-Segura-Multi-Cliente/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
@@ -99,6 +99,14 @@ Cliente A (1º a conectar)         Servidor                  Cliente B (2º a co
 3. **Rendezvous:** para cada par de clientes, o servidor gera um `salt_AB` aleatório e envia aos dois um `PEER_JOIN` com o `client_id`, a chave pública e o nome do outro, o `salt_AB` e um contador `seq_send`, tudo assinado com RSA-PSS. Um MITM não consegue trocar a chave de um peer sem invalidar a assinatura.
 4. **Derivação:** cada par calcula o segredo ECDH e deriva uma chave AES por direção via HKDF com o `salt_AB` do par.
 5. **Mensagens:** cada mensagem é cifrada com AES-128-GCM e o servidor só a encaminha.
+
+**Confiança no servidor:** a assinatura de `PEER_JOIN` confirma que o anúncio
+foi emitido pelo servidor autenticado. Ela não prova que esse servidor é honesto.
+Um servidor malicioso, com sua chave RSA legítima, poderia anunciar chaves
+X25519 falsas aos participantes e intermediar as mensagens, comprometendo
+a confidencialidade. O projeto pressupõe um servidor honesto na distribuição
+das chaves públicas. O certificado pinado protege contra a substituição do
+servidor por terceiros; não elimina essa confiança no próprio servidor.
 
 ### Formato dos frames
 
@@ -203,7 +211,7 @@ cp .env.example .env
 | `SERVER_HOST` | `127.0.0.1` | cliente | endereço do servidor |
 | `SERVER_PORT` | `9000` | servidor / cliente | porta TCP |
 | `MAX_CLIENTS` | `64` | servidor | conexões simultâneas aceitas |
-| `HANDSHAKE_TIMEOUT` | `10` | servidor | segundos para concluir o handshake |
+| `HANDSHAKE_TIMEOUT` | `10` | servidor / cliente | prazo do handshake em segundos (1 a 300) |
 | `SERVER_KEY_PATH` | `certs/server.key` | servidor | chave privada RSA |
 | `SERVER_CERT_PATH` | `certs/public/server.crt` | servidor | certificado autoassinado |
 | `PINNED_CERT_PATH` | `certs/public/server.crt` | cliente | certificado pinado do servidor |
@@ -319,6 +327,66 @@ git commit -m "feat: implementa comandos do cliente no terminal"
 ```
 
 O destino previsto do PR é `integracao`. As tarefas seguintes não foram iniciadas.
+
+### Ajustes de configuração e buffer — Tarefa 2
+
+`HANDSHAKE_TIMEOUT` agora é lido tanto pelo servidor quanto pelo cliente, com
+padrão de 10 segundos e valores inteiros permitidos de 1 a 300. O servidor limita
+a espera pelo `HELLO`; o cliente limita a espera pelo `HELLO_RESP`. Valor vazio
+usa o padrão; valor inválido impede a inicialização com um erro de configuração.
+Exemplo no PowerShell, antes de iniciar o programa naquele terminal:
+
+```powershell
+$env:HANDSHAKE_TIMEOUT = "20"
+```
+
+O relay limita a fila de saída de cada destinatário a **1 MiB**
+(`MAX_WRITE_BUFFER`, em `server/server.py`). `_send_bounded()` confere o tamanho
+atual mais o próximo frame antes de escrever. Se o envio ultrapassaria o limite,
+usa `transport.abort()` para descartar a fila e encerrar só aquela conexão.
+Um fechamento comum com `close()` poderia continuar esperando os bytes escoarem.
+O tratamento de desconexão existente remove a sessão e anuncia `PEER_LEAVE`.
+Essa proteção vale para os frames E2E, os avisos assinados e o erro de destinatário
+ausente, sem alterar a criptografia nem o formato do protocolo.
+
+**Para explicar:** “Um cliente que não lê pode acumular mensagens no servidor.
+Limitamos essa fila e desconectamos somente esse cliente, mantendo os demais.
+Também tornamos o prazo do handshake configurável e documentamos a confiança
+necessária no servidor que distribui as chaves.”
+
+**Testes da etapa:** `tests/test_config.py` cobre o prazo padrão, os limites e
+os valores inválidos nos dois lados. `tests/test_handshake.py` verifica a aplicação
+do prazo e seu repasse pela configuração. `tests/test_server_buffers.py` testa o
+limite exato, o descarte de conexões lentas e os avisos de controle; inclui uma
+conexão real que deixa de ler, enche a fila e é removida enquanto outros dois
+clientes continuam trocando mensagens.
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+**Validação disponível:** `ruff` aprovado e 40 testes síncronos de configuração,
+argumentos e buffer aprovados. A suíte completa ainda precisa ser executada no
+terminal local: neste ambiente, a criação do event loop do Python bloqueia em
+`socket._fallback_socketpair()` (antes da execução dos testes assíncronos).
+A tentativa de suíte anterior às mudanças já apresentava esse bloqueio.
+
+**Ponto de versionamento:** a criação de `feat/ajustes-seguranca` pelo assistente
+foi bloqueada pela escrita em `.git`. As alterações desta etapa ficaram sem commit
+sobre `feat/cli-cliente`, após o commit `29c4cd5`. Antes de registrar a etapa,
+crie a nova branch no terminal local, revise e valide os checks:
+
+```powershell
+git switch -c feat/ajustes-seguranca
+git diff --check
+git add common/config.py client/client.py server/server.py .env.example tests/test_config.py tests/test_handshake.py tests/test_server_buffers.py README.md README_OQFALTA.md
+git commit -m "fix: configura timeout e limita buffer de envio"
+```
+
+A branch parte do commit da CLI para preservar a Tarefa 1. O PR desta etapa deve
+ter como destino `integracao`, após a integração do PR da CLI. Não foram feitos
+commit, push ou PR automaticamente. A Tarefa 3 ainda não foi iniciada.
 
 ### Em máquinas diferentes (mesma rede)
 

@@ -60,15 +60,21 @@ Implementação da CLI concluída e validada:
 
 **Regra:** o texto das mensagens vai para a tela com `print()`, **nunca** para o `log`.
 
-**Validação desta etapa:** no terminal local do integrante, após instalar as dependências, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **200 passed in 3.24s** (27 testes de CLI). Inicialmente, o ambiente do assistente não tinha as dependências e a instalação falhou por DNS; não há resultado da suíte anterior às mudanças para comparação. A suíte atual completa está aprovada. As tarefas seguintes não foram iniciadas.
+**Validação desta etapa:** no terminal local do integrante, após instalar as dependências, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **200 passed in 3.24s** (27 testes de CLI). Inicialmente, o ambiente do assistente não tinha as dependências e a instalação falhou por DNS; não há resultado da suíte anterior às mudanças para comparação. A suíte da Tarefa 1 foi aprovada antes do início da Tarefa 2.
 
-**Git:** base `integracao` (commit `891f963`); branch atual `feat/cli-cliente`, criada pelo integrante no terminal local. Mudanças prontas para revisão e commit, sem commit, push ou PR automático. O fluxo está no `README.md`.
+**Git da Tarefa 1:** base `integracao` (commit `891f963`); branch `feat/cli-cliente`, com a CLI registrada no commit `29c4cd5`.
 
 ### Tarefa 2 — Ajustes já aprovados na revisão
 
-- [ ] **Timeout do cliente pela configuração.** Em `client/client.py`, `HANDSHAKE_TIMEOUT = 10` está fixo. Adicione `handshake_timeout` ao `ClientConfig` em `common/config.py`, lendo a mesma variável `HANDSHAKE_TIMEOUT` que o servidor usa. Atualize `tests/test_config.py`.
-- [ ] **Limite de buffer no servidor.** Em `server/server.py`, `_relay()` e `_send_control()` escrevem sem esperar o envio. Se `recipient.writer.transport.get_write_buffer_size()` passar de um limite (ex.: 1 MiB), feche a conexão desse destinatário. Escreva um teste com um cliente que nunca lê.
-- [ ] **README: frase sobre o servidor.** Trocar "não tem como decifrar" por algo como "um servidor honesto não consegue decifrar". Adicionar uma nota: um servidor malicioso, que assina o que quiser, poderia anunciar uma chave falsa no `PEER_JOIN`.
+Implementação concluída; validação assíncrona completa pendente no terminal local:
+
+- [x] **Timeout do cliente pela configuração:** `ClientConfig.handshake_timeout` lê `HANDSHAKE_TIMEOUT` (padrão 10, faixa 1–300), e `run()` passa esse prazo ao handshake. Testes de configuração e do prazo em `tests/test_config.py` e `tests/test_handshake.py`.
+- [x] **Limite de buffer no servidor:** `_send_bounded()` limita a fila a 1 MiB antes de cada escrita de relay/controle. Ao ultrapassar, aborta só a conexão lenta; o fluxo existente remove a sessão. `tests/test_server_buffers.py` inclui testes determinísticos e uma conexão real que para de ler.
+- [x] **README: confiança no servidor:** esclarecido que um servidor honesto não consegue decifrar e que um servidor malicioso poderia assinar anúncios de chaves falsas.
+
+**Validação:** `ruff check .` aprovado; 40 testes síncronos de configuração, argumentos e buffer passaram. A suíte completa precisa ser executada no terminal local: neste ambiente, o event loop bloqueia na criação de `socketpair`, comportamento observado também na tentativa anterior às mudanças. Os testes assíncronos novos ainda não foram validados. As instruções de execução e a explicação para apresentação estão no `README.md`.
+
+**Git:** alterações preparadas sobre o commit `29c4cd5` da CLI. A criação de `feat/ajustes-seguranca` foi bloqueada pela permissão de escrita em `.git`; crie a branch no terminal local antes de registrar esta etapa. Sem commit, push ou PR automático. Não avançar para a Tarefa 3 antes da revisão e validação desta etapa.
 
 ### Tarefa 3 — Cenários obrigatórios ponta a ponta (fase 4)
 

@@ -30,8 +30,6 @@ from common.protocol import MAX_NAME_LEN, MAX_PLAINTEXT_LEN, E2EFrame, E2EFrameE
 
 log = logging.getLogger("client")
 
-HANDSHAKE_TIMEOUT = 10
-
 
 class HandshakeError(Exception):
     pass
@@ -93,13 +91,15 @@ class ChatClient:
         self.peers: dict[bytes, Peer] = {}
         self._last_control_seq = 0
 
-    async def handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handshake(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *, timeout: float = 10,
+    ) -> None:
         """Envia HELLO e autentica o servidor pelo HELLO_RESP. Levanta HandshakeError ou CryptoError."""
         writer.write(encode_frame(MsgType.HELLO, Hello(self.client_id, self.pk, self.name).encode()))
         await writer.drain()
 
         try:
-            frame = await asyncio.wait_for(read_frame(reader), HANDSHAKE_TIMEOUT)
+            frame = await asyncio.wait_for(read_frame(reader), timeout)
         except asyncio.TimeoutError:
             raise HandshakeError("o servidor não respondeu ao HELLO") from None
         except FrameError as e:
@@ -324,7 +324,7 @@ async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
     log.info("%s (%s) conectado a %s:%d", name, client_id, config.host, config.port)
     try:
         try:
-            await client.handshake(reader, writer)
+            await client.handshake(reader, writer, timeout=config.handshake_timeout)
         except crypto.AuthenticationError as e:
             raise SystemExit(f"servidor NÃO autenticado, conexão abortada: {e}") from None
         except (HandshakeError, crypto.CryptoError) as e:
