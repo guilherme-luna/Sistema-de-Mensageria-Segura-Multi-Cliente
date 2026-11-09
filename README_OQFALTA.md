@@ -66,15 +66,15 @@ Implementação da CLI concluída e validada:
 
 ### Tarefa 2 — Ajustes já aprovados na revisão
 
-Implementação concluída; validação assíncrona completa pendente no terminal local:
+Implementação concluída e validação completa aprovada no terminal local:
 
 - [x] **Timeout do cliente pela configuração:** `ClientConfig.handshake_timeout` lê `HANDSHAKE_TIMEOUT` (padrão 10, faixa 1–300), e `run()` passa esse prazo ao handshake. Testes de configuração e do prazo em `tests/test_config.py` e `tests/test_handshake.py`.
 - [x] **Limite de buffer no servidor:** `_send_bounded()` limita a fila a 1 MiB antes de cada escrita de relay/controle. Ao ultrapassar, aborta só a conexão lenta; o fluxo existente remove a sessão. `tests/test_server_buffers.py` inclui testes determinísticos e uma conexão real que para de ler.
 - [x] **README: confiança no servidor:** esclarecido que um servidor honesto não consegue decifrar e que um servidor malicioso poderia assinar anúncios de chaves falsas.
 
-**Validação:** `ruff check .` aprovado; 40 testes síncronos de configuração, argumentos e buffer passaram. A suíte completa precisa ser executada no terminal local: neste ambiente, o event loop bloqueia na criação de `socketpair`, comportamento observado também na tentativa anterior às mudanças. Os testes assíncronos novos ainda não foram validados. As instruções de execução e a explicação para apresentação estão no `README.md`.
+**Validação:** no terminal local, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **225 passed in 3.67s**. Inclui os testes assíncronos novos e a conexão real que para de ler, sem prejudicar os outros clientes. O bloqueio do event loop no ambiente do assistente não ocorreu no terminal local.
 
-**Git:** alterações preparadas sobre o commit `29c4cd5` da CLI. A criação de `feat/ajustes-seguranca` foi bloqueada pela permissão de escrita em `.git`; crie a branch no terminal local antes de registrar esta etapa. Sem commit, push ou PR automático. Não avançar para a Tarefa 3 antes da revisão e validação desta etapa.
+**Git:** branch `feat/ajustes-seguranca` criada pelo integrante. O commit `512a6ef` já contém parte da etapa (cliente e documentação), apesar da mensagem da CLI. Os arquivos restantes e o registro da validação estão prontos para revisão e commit. Sem commit, push ou PR automático. A Tarefa 3 ainda não foi iniciada.
 
 ### Tarefa 3 — Cenários obrigatórios ponta a ponta (fase 4)
 

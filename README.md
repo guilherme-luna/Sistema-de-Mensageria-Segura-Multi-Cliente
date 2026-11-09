@@ -366,19 +366,17 @@ clientes continuam trocando mensagens.
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-**Validação disponível:** `ruff` aprovado e 40 testes síncronos de configuração,
-argumentos e buffer aprovados. A suíte completa ainda precisa ser executada no
-terminal local: neste ambiente, a criação do event loop do Python bloqueia em
-`socket._fallback_socketpair()` (antes da execução dos testes assíncronos).
-A tentativa de suíte anterior às mudanças já apresentava esse bloqueio.
+**Validação concluída no terminal local (Windows):** `ruff check .` retornou
+`All checks passed!` e `pytest -q` retornou **225 passed in 3.67s**, incluindo os
+testes assíncronos e o cenário real de destinatário sem leitura. O bloqueio de
+`socketpair` observado no ambiente do assistente não ocorreu no terminal local.
 
-**Ponto de versionamento:** a criação de `feat/ajustes-seguranca` pelo assistente
-foi bloqueada pela escrita em `.git`. As alterações desta etapa ficaram sem commit
-sobre `feat/cli-cliente`, após o commit `29c4cd5`. Antes de registrar a etapa,
-crie a nova branch no terminal local, revise e valide os checks:
+**Ponto de versionamento:** a branch `feat/ajustes-seguranca` foi criada no
+terminal local. Ela já contém o commit `512a6ef`, que registrou parte desta etapa
+(documentação e cliente) com a mensagem da CLI. Os arquivos restantes e esta
+atualização de validação devem ser registrados no próximo commit:
 
 ```powershell
-git switch -c feat/ajustes-seguranca
 git diff --check
 git add common/config.py client/client.py server/server.py .env.example tests/test_config.py tests/test_handshake.py tests/test_server_buffers.py README.md README_OQFALTA.md
 git commit -m "fix: configura timeout e limita buffer de envio"

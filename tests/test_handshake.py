@@ -2,12 +2,15 @@ import asyncio
 import logging
 import struct
 import uuid
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from helpers import connect, frame_bytes, running_server, tampering_proxy
 
 from client.client import ChatClient, HandshakeError
 from common import crypto
+from common.config import ClientConfig
 from common.framing import Frame, encode_error, encode_frame
 from common.messages import HELLO_MAX_LEN, Hello, HelloResp
 from common.protocol import ErrorCode, MsgType
@@ -131,6 +134,31 @@ class _NullWriter:
 
     async def drain(self):
         pass
+
+
+async def test_client_uses_handshake_deadline(identity):
+    client = ChatClient(identity[1], "alice", uuid.uuid4().bytes)
+    # Nenhuma resposta nem EOF: só o timeout pode encerrar essa leitura.
+    reader = asyncio.StreamReader()
+    with pytest.raises(HandshakeError, match="não respondeu"):
+        await asyncio.wait_for(client.handshake(reader, _NullWriter(), timeout=0.01), timeout=1)
+
+
+async def test_run_passes_configured_timeout(identity, monkeypatch):
+    from client import client as cli
+
+    writer = Mock(wait_closed=AsyncMock())
+    reader = Mock()
+    handshake = AsyncMock(side_effect=HandshakeError("teste de timeout"))
+    monkeypatch.setattr(cli.crypto, "load_certificate", Mock(return_value=identity[1]))
+    monkeypatch.setattr(cli.ChatClient, "handshake", handshake)
+    monkeypatch.setattr(cli.asyncio, "open_connection", AsyncMock(return_value=(reader, writer)))
+    config = ClientConfig("127.0.0.1", 9000, Path("unused.crt"), "INFO", handshake_timeout=27)
+    with pytest.raises(SystemExit, match="teste de timeout"):
+        await cli.run(config, "alice", uuid.uuid4())
+    handshake.assert_awaited_once_with(reader, writer, timeout=27)
+    writer.close.assert_called_once()
+    writer.wait_closed.assert_awaited_once()
 
 
 async def test_client_reports_server_refusal(identity):
