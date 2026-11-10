@@ -87,6 +87,18 @@ async def test_replay_is_rejected_by_recipient(demo, caplog):
     assert await receive(demo.bob) == ChatMessage("alice", "de novo, legítima")
 
 
+async def test_replay_right_after_bitflip_is_still_a_replay(demo, caplog):
+    """'b' e depois 'r': o replay reenvia a última mensagem ACEITA, não o original da adulterada."""
+    await send(demo.alice, "bob", "aceita")
+    assert await receive(demo.bob) == ChatMessage("alice", "aceita")
+    demo.proxy.arm_bitflip()
+    await send(demo.alice, "bob", "adulterada")
+    assert await receive(demo.bob) is None
+    await demo.proxy.replay_last()
+    assert await receive(demo.bob) is None
+    assert "replay" in caplog.text
+
+
 async def test_replay_without_previous_message_does_nothing(demo):
     await demo.proxy.replay_last()
     assert "nada para reenviar" in demo.proxy.shown[-1]
