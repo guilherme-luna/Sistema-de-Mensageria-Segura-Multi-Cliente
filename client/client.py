@@ -12,6 +12,9 @@ import argparse
 import asyncio
 import builtins
 import logging
+import os
+import sys
+import threading
 import uuid
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -378,6 +381,21 @@ def parse_args(config: ClientConfig) -> tuple[ClientConfig, str, uuid.UUID]:
     return replace(config, host=args.host, port=args.port), args.name, client_id
 
 
+def finish(code: int = 0) -> None:
+    """Encerra o processo sem travar na thread do teclado.
+
+    Se a thread que espera um Enter ainda estiver viva, a finalização normal do
+    interpretador disputa com ela o lock do stdin; no Python 3.10 isso aborta o
+    processo ("could not acquire lock for <stdin>"). Nesse caso a saída é feita
+    com os._exit, depois de esvaziar a saída e os logs.
+    """
+    if any(t.name == "chat-input" and t.is_alive() for t in threading.enumerate()):
+        sys.stdout.flush()
+        sys.stderr.flush()
+        logging.shutdown()
+        os._exit(code)
+
+
 def main() -> None:
     force_utf8_output()
     try:
@@ -396,6 +414,7 @@ def main() -> None:
         asyncio.run(run(config, name, client_id))
     except KeyboardInterrupt:
         pass
+    finish()
 
 
 if __name__ == "__main__":

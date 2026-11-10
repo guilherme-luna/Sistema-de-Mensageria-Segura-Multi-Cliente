@@ -230,6 +230,9 @@ def test_process_exits_with_input_still_blocked():
             await asyncio.gather(task, return_exceptions=True)
         asyncio.run(main())
         print("encerrado", flush=True)
+        # Mesmo caminho do main() do cliente; sem ele o Python 3.10 aborta na finalização
+        from client.client import finish
+        finish()
     ''')
     process = subprocess.Popen(
         [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
