@@ -16,6 +16,7 @@ from client.client import ChatClient
 from common.config import ServerConfig
 from common.framing import Frame, encode_frame, read_frame
 from server.server import RelayServer
+from tools.mitm_proxy import MitmProxy
 
 
 def make_identity():
@@ -58,47 +59,25 @@ async def running_server(identity, **config):
         await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
+class _FunctionProxy(MitmProxy):
+    """O proxy da demo com server_to_client trocado por uma função do teste."""
+
+    def __init__(self, upstream_port: int, to_client: Callable[[Frame], Optional[bytes]]):
+        super().__init__("127.0.0.1", upstream_port, show=lambda _: None)
+        self._to_client = to_client
+
+    def server_to_client(self, frame: Frame) -> Optional[bytes]:
+        return self._to_client(frame)
+
+
 @contextlib.asynccontextmanager
 async def tampering_proxy(upstream_port: int, to_client: Callable[[Frame], Optional[bytes]]):
-    """Proxy MITM: repassa cliente -> servidor intacto e aplica to_client a cada frame do servidor.
+    """Proxy MITM (tools/mitm_proxy.py) que aplica to_client a cada frame do servidor para o cliente.
 
     to_client devolve os bytes a entregar ao cliente (ou None para descartar o frame).
     """
-    async def pump_up(reader, writer):
-        while data := await reader.read(4096):
-            writer.write(data)
-            await writer.drain()
-
-    async def pump_down(reader, writer):
-        while (frame := await read_frame(reader)) is not None:
-            out = to_client(frame)
-            if out is not None:
-                writer.write(out)
-                await writer.drain()
-
-    open_writers = set()
-
-    async def handle(client_reader, client_writer):
-        open_writers.add(client_writer)
-        server_reader, server_writer = await asyncio.open_connection("127.0.0.1", upstream_port)
-        tasks = [
-            asyncio.create_task(pump_up(client_reader, server_writer)),
-            asyncio.create_task(pump_down(server_reader, client_writer)),
-        ]
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for task in tasks:
-            task.cancel()
-        for writer in (client_writer, server_writer):
-            writer.close()
-
-    proxy = await asyncio.start_server(handle, "127.0.0.1", 0)
-    try:
-        yield proxy.sockets[0].getsockname()[1]
-    finally:
-        proxy.close()
-        for writer in open_writers:
-            writer.close()
-        await asyncio.wait_for(proxy.wait_closed(), timeout=5)
+    async with _FunctionProxy(upstream_port, to_client).serving() as port:
+        yield port
 
 
 def frame_bytes(frame: Frame) -> bytes:

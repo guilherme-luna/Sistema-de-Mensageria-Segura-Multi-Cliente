@@ -25,6 +25,7 @@ Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servido
 - [Requisitos](#-requisitos)
 - [Configuração](#-configuração)
 - [Uso](#-uso)
+  - [Demonstração de ataques (proxy MITM)](#demonstração-de-ataques-proxy-mitm)
   - [Em máquinas diferentes (mesma rede)](#em-máquinas-diferentes-mesma-rede)
   - [Com Docker](#com-docker)
 - [Testes](#-testes)
@@ -174,7 +175,7 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 ├── scripts/
 │   └── gen_cert.py     # gera chave RSA e certificado autoassinado
 ├── tools/
-│   └── mitm_proxy.py   # proxy para demonstrar bitflip e replay
+│   └── mitm_proxy.py   # proxy MITM da demo: bitflip, replay e troca de chave
 ├── tests/              # testes automatizados (pytest)
 └── certs/              # gerado localmente, nada aqui é versionado
     ├── server.key      #   chave privada (só na máquina do servidor)
@@ -385,6 +386,27 @@ git commit -m "fix: configura timeout e limita buffer de envio"
 A branch parte do commit da CLI para preservar a Tarefa 1. O PR desta etapa deve
 ter como destino `integracao`, após a integração do PR da CLI. Não foram feitos
 commit, push ou PR automaticamente. A Tarefa 3 ainda não foi iniciada.
+
+### Demonstração de ataques (proxy MITM)
+
+O `tools/mitm_proxy.py` fica entre **um** cliente e o servidor, como um atacante na rede. Ele mostra cada frame E2E que passa (quem fala com quem, `seq_no` e o começo do ciphertext em hex, nunca o texto) e ataca sob comando.
+
+Um terminal para cada:
+
+```bash
+python -m server.server
+python -m tools.mitm_proxy --listen 9001 --upstream 127.0.0.1:9000
+python -m client.client --name alice --port 9001   # alice passa pelo proxy
+python -m client.client --name bob                 # bob conecta direto
+```
+
+| Comando no proxy | Ataque | O que o destinatário mostra |
+|:---:|---|---|
+| `b` | inverte 1 bit na próxima mensagem da alice | `frame E2E rejeitado: ... tag GCM inválida (frame adulterado)` |
+| `r` | reenvia a última mensagem da alice, byte a byte igual | `frame E2E rejeitado: ... seq_no N já visto (replay)` |
+| `k` | troca a chave pública do próximo `PEER_JOIN` que a alice recebe (conecte um terceiro cliente para gerar um) | alice: `mensagem do servidor NÃO autenticada, conexão abortada: assinatura RSA-PSS inválida` |
+
+Depois de `b` e `r`, a conversa continua normalmente: o ataque só descarta o frame atacado. O `k` derruba a alice, então deixe-o por último.
 
 ### Em máquinas diferentes (mesma rede)
 
