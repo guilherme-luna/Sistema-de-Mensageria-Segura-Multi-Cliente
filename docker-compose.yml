@@ -1,0 +1,49 @@
+# As variáveis abaixo vêm do .env da raiz (lido pelo próprio Compose) ou do padrão.
+# Os caminhos dos certificados são fixos dentro do container, para que caminhos
+# do host (ex.: C:\...) definidos no .env não quebrem o container.
+
+x-common-env: &common-env
+  SERVER_PORT: ${SERVER_PORT:-9000}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Fuso dos logs (o container usa UTC por padrão)
+  TZ: ${TZ:-America/Fortaleza}
+
+services:
+  server:
+    build: .
+    environment:
+      <<: *common-env
+      SERVER_BIND_HOST: 0.0.0.0
+      MAX_CLIENTS: ${MAX_CLIENTS:-64}
+      HANDSHAKE_TIMEOUT: ${HANDSHAKE_TIMEOUT:-10}
+      SERVER_KEY_PATH: /app/certs/server.key
+      SERVER_CERT_PATH: /app/certs/public/server.crt
+    ports:
+      - "${SERVER_PORT:-9000}:${SERVER_PORT:-9000}"
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /app/certs
+        read_only: true
+
+  # Uso: docker compose run --rm client --name alice
+  client:
+    build: .
+    profiles: ["client"]
+    entrypoint: ["python", "-m", "client.client"]
+    stdin_open: true
+    tty: true
+    environment:
+      <<: *common-env
+      SERVER_HOST: server
+      PINNED_CERT_PATH: /app/certs/public/server.crt
+    volumes:
+      # Só a pasta pública entra no cliente; o server.key (em certs/) fica de fora.
+      # Monta-se a pasta, não o arquivo: montar um arquivo inexistente faz o
+      # Docker Desktop criar uma PASTA chamada server.crt no host.
+      - type: bind
+        source: ./certs/public
+        target: /app/certs/public
+        read_only: true
+    depends_on:
+      - server
