@@ -86,14 +86,16 @@ class MitmProxy:
         data = encode_frame(frame.msg_type, frame.body)
         if frame.msg_type != MsgType.E2E:
             return data
-        self._last_e2e = data  # guarda o original, para o replay ser idêntico ao que já foi aceito
         self._describe(frame.body, "cliente -> servidor")
         if self._bitflip_armed and len(frame.body) > E2E_HEADER_LEN:
             self._bitflip_armed = False
             body = bytearray(frame.body)
             body[E2E_HEADER_LEN] ^= 0x01  # primeiro byte do ciphertext
             self.show("[ataque] bit invertido no ciphertext desta mensagem")
+            # Não vira alvo do replay: o destinatário nunca aceitou esta mensagem, e
+            # reenviar o original seria uma entrega legítima, não um replay
             return encode_frame(MsgType.E2E, bytes(body))
+        self._last_e2e = data  # só mensagens entregues intactas, já aceitas pelo destinatário
         return data
 
     def server_to_client(self, frame: Frame) -> Optional[bytes]:
