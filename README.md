@@ -166,8 +166,11 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 .
 ├── common/
 │   ├── framing.py      # leitura/escrita de frames com prefixo de tamanho
-│   ├── protocol.py     # tipos de mensagem, serialização, constantes
-│   └── crypto.py       # X25519, HKDF, AES-GCM, RSA-PSS
+│   ├── protocol.py     # constantes, tipos de mensagem e frame E2E
+│   ├── messages.py     # HELLO, HELLO_RESP, PEER_JOIN, PEER_LEAVE e o material assinado
+│   ├── crypto.py       # X25519, HKDF, AES-GCM, RSA-PSS, certificado pinado
+│   ├── config.py       # configuração por variáveis de ambiente / .env
+│   └── log.py          # logging e fingerprint() de chaves públicas
 ├── server/
 │   └── server.py       # relay asyncio + tabela de sessões
 ├── client/
@@ -176,6 +179,8 @@ O destinatário rejeita o frame se a tag GCM não confere (adulteração) ou se 
 │   └── gen_cert.py     # gera chave RSA e certificado autoassinado
 ├── tools/
 │   └── mitm_proxy.py   # proxy MITM da demo: bitflip, replay e troca de chave
+├── docs/
+│   └── apresentacao.md # roteiro da apresentação e da demo
 ├── tests/              # testes automatizados (pytest)
 └── certs/              # gerado localmente, nada aqui é versionado
     ├── server.key      #   chave privada (só na máquina do servidor)
@@ -233,6 +238,11 @@ python scripts/gen_cert.py
 
 Isso cria `certs/server.key` (privada, ignorada pelo git) e `certs/public/server.crt` (pública, pinada nos clientes).
 
+O certificado não é de autoridade certificadora (CA) e só serve para assinatura digital: o cliente o usa apenas para verificar a assinatura do handshake e dos anúncios de peers.
+
+> [!NOTE]
+> No Linux e no macOS, a chave privada é criada com permissão `600` (só o dono lê). No **Windows** essa permissão não tem efeito: a proteção vem da pasta do usuário (`C:\Users\<nome>\...`), que outros usuários comuns da máquina não acessam, então mantenha o projeto dentro dela. Em qualquer sistema, a chave nunca entra no git (`.gitignore`) nem na imagem Docker, e não deve ser copiada para as máquinas dos clientes.
+
 **2. Subir o servidor:**
 
 ```bash
@@ -256,136 +266,12 @@ O nome aceita de 1 a 32 caracteres entre letras, números, `_` e `-`. A cada exe
 | `/msg <nome> <texto>` | envia uma mensagem E2E |
 | `/quit` | desconecta |
 
-### CLI do cliente — Tarefa 1
+Uma mensagem recebida aparece só na tela, como `[alice] Olá, Bob!`, nunca no log. O cliente continua recebendo enquanto espera o teclado. Comando desconhecido ou incompleto mostra a ajuda; destinatário ausente ou mensagem acima de 4096 bytes mostra um aviso e o cliente continua. `/quit`, fim da entrada (Ctrl+Z e Enter no Windows, Ctrl+D no Linux) ou queda do servidor encerram a sessão sem precisar de Enter.
 
-O cliente recebe mensagens enquanto espera comandos. `/peers` mostra o nome e o
-UUID de cada outro participante; sem participantes, mostra um aviso. Use, por exemplo,
-`/msg bob Olá, Bob!` no terminal de Alice e `/msg alice Olá, Alice!` no de Bob.
-Uma mensagem recebida aparece como `[alice] Olá, Bob!`, somente na tela.
-Comandos desconhecidos, vazios ou incompletos mostram a ajuda. Um destinatário
-ausente ou uma mensagem acima de 4096 bytes gera um aviso e permite tentar novamente.
+**Proteções do servidor contra clientes problemáticos:**
 
-`/quit`, fim da entrada (EOF) ou desconexão do servidor encerram a sessão. Para
-verificar o último caso, pare o servidor enquanto os clientes aguardam o teclado:
-eles devem sair sem precisar pressionar Enter. No Windows, EOF pode ser informado
-com Ctrl+Z e Enter; Ctrl+C também encerra o programa.
-
-**Como o código está organizado:**
-
-- `parse_command()` interpreta a linha sem usar rede nem alterar o cliente.
-- `read_commands()` lista participantes ou usa `encrypt()`, `writer.write()` e
-  `writer.drain()` para enviar; trata `SendError` na tela.
-- `receive_messages()` processa os frames e mostra as mensagens com `print()`.
-- `chat()` executa os dois laços e, quando um termina, cancela e aguarda o outro.
-  `run()` mantém o handshake e o fechamento da conexão no seu `finally`.
-- `_terminal_input()` adapta a leitura bloqueante: `read_commands()` usa
-  `await asyncio.to_thread(input)` com esse adaptador. Uma thread daemon lê o
-  `input()` original e uma fila entrega a linha. Um evento libera a espera do
-  executor em até 50 ms ao encerrar. Isso evita que `asyncio.run()` fique preso
-  esperando o executor depois da queda do servidor, inclusive no Windows. A thread
-  daemon que ainda espera Enter não impede a saída do processo; a CLI é destinada
-  a uma sessão por processo.
-
-**Validação:** execute na raiz, no PowerShell:
-
-```powershell
-.\.venv\Scripts\python.exe -m ensurepip
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q tests/test_cli.py
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-`tests/test_cli.py` cobre interpretação, listagem, envio E2E, recuperação após
-erro, recepção durante espera pelo teclado, saída/EOF, cancelamento, limpeza da
-conexão e encerramento de um processo com a entrada ainda aberta. Os testes de
-rede usam certificados temporários em memória, sem gerar chaves no repositório.
-
-**Validação concluída no terminal local (Windows, Python 3.14):**
-
-- `ruff check .`: `All checks passed!`.
-- `pytest -q`: **200 passed in 3.24s**, incluindo os 27 testes de CLI.
-
-Inicialmente, o ambiente do assistente não tinha as dependências e não conseguiu
-instalá-las por falha de DNS. Depois, a instalação e os checks completos foram
-executados com sucesso pelo integrante no terminal local. Não há execução da
-suíte anterior às mudanças para comparação; a suíte atual completa passou.
-
-**Para explicar na apresentação:** “O cliente tem duas tarefas: uma recebe a rede
-e outra lê o teclado. O comando de envio usa a criptografia que já existia.
-Se houver erro de envio, mostramos o aviso e continuamos. Quando o usuário sai
-ou o servidor desconecta, encerramos as tarefas e fechamos a conexão.”
-
-**Ponto de versionamento:** esta etapa altera somente `client/client.py`,
-`tests/test_cli.py`, `README.md` e `README_OQFALTA.md`. A branch
-`feat/cli-cliente` já foi criada a partir de `integracao`, e os checks passaram.
-Após revisar, registre o commit com os comandos abaixo:
-
-```powershell
-git diff --check
-git add client/client.py tests/test_cli.py README.md README_OQFALTA.md
-git commit -m "feat: implementa comandos do cliente no terminal"
-```
-
-O destino previsto do PR é `integracao`. As tarefas seguintes não foram iniciadas.
-
-### Ajustes de configuração e buffer — Tarefa 2
-
-`HANDSHAKE_TIMEOUT` agora é lido tanto pelo servidor quanto pelo cliente, com
-padrão de 10 segundos e valores inteiros permitidos de 1 a 300. O servidor limita
-a espera pelo `HELLO`; o cliente limita a espera pelo `HELLO_RESP`. Valor vazio
-usa o padrão; valor inválido impede a inicialização com um erro de configuração.
-Exemplo no PowerShell, antes de iniciar o programa naquele terminal:
-
-```powershell
-$env:HANDSHAKE_TIMEOUT = "20"
-```
-
-O relay limita a fila de saída de cada destinatário a **1 MiB**
-(`MAX_WRITE_BUFFER`, em `server/server.py`). `_send_bounded()` confere o tamanho
-atual mais o próximo frame antes de escrever. Se o envio ultrapassaria o limite,
-usa `transport.abort()` para descartar a fila e encerrar só aquela conexão.
-Um fechamento comum com `close()` poderia continuar esperando os bytes escoarem.
-O tratamento de desconexão existente remove a sessão e anuncia `PEER_LEAVE`.
-Essa proteção vale para os frames E2E, os avisos assinados e o erro de destinatário
-ausente, sem alterar a criptografia nem o formato do protocolo.
-
-**Para explicar:** “Um cliente que não lê pode acumular mensagens no servidor.
-Limitamos essa fila e desconectamos somente esse cliente, mantendo os demais.
-Também tornamos o prazo do handshake configurável e documentamos a confiança
-necessária no servidor que distribui as chaves.”
-
-**Testes da etapa:** `tests/test_config.py` cobre o prazo padrão, os limites e
-os valores inválidos nos dois lados. `tests/test_handshake.py` verifica a aplicação
-do prazo e seu repasse pela configuração. `tests/test_server_buffers.py` testa o
-limite exato, o descarte de conexões lentas e os avisos de controle; inclui uma
-conexão real que deixa de ler, enche a fila e é removida enquanto outros dois
-clientes continuam trocando mensagens.
-
-```powershell
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-**Validação concluída no terminal local (Windows):** `ruff check .` retornou
-`All checks passed!` e `pytest -q` retornou **225 passed in 3.67s**, incluindo os
-testes assíncronos e o cenário real de destinatário sem leitura. O bloqueio de
-`socketpair` observado no ambiente do assistente não ocorreu no terminal local.
-
-**Ponto de versionamento:** a branch `feat/ajustes-seguranca` foi criada no
-terminal local. Ela já contém o commit `512a6ef`, que registrou parte desta etapa
-(documentação e cliente) com a mensagem da CLI. Os arquivos restantes e esta
-atualização de validação devem ser registrados no próximo commit:
-
-```powershell
-git diff --check
-git add common/config.py client/client.py server/server.py .env.example tests/test_config.py tests/test_handshake.py tests/test_server_buffers.py README.md README_OQFALTA.md
-git commit -m "fix: configura timeout e limita buffer de envio"
-```
-
-A branch parte do commit da CLI para preservar a Tarefa 1. O PR desta etapa deve
-ter como destino `integracao`, após a integração do PR da CLI. Não foram feitos
-commit, push ou PR automaticamente. A Tarefa 3 ainda não foi iniciada.
+- **Prazo do handshake:** `HANDSHAKE_TIMEOUT` (padrão 10 s) limita a espera do servidor pelo `HELLO` e do cliente pelo `HELLO_RESP`.
+- **Fila por destinatário:** cada cliente tem no máximo 1 MiB esperando envio no servidor. Um cliente que para de ler é desconectado sozinho (`PEER_LEAVE` para os outros), sem atrasar a conversa dos demais.
 
 ### Demonstração de ataques (proxy MITM)
 
@@ -494,52 +380,17 @@ python -m pytest -q
 | Handshake e distribuição de chaves | `tests/test_handshake.py`, `tests/test_rendezvous.py` | Certificado pinado, assinaturas, papéis e anúncios de participantes |
 | CLI e configuração | `tests/test_cli.py`, `tests/test_config.py` | Comandos, encerramento, variáveis e timeout |
 | Destinatário sem leitura | `tests/test_server_buffers.py` | Limite de 1 MiB e continuidade dos clientes restantes |
+| Ferramenta da demonstração | `tests/test_mitm_proxy.py` | Bitflip, replay e troca de chave feitos pelo próprio proxy da apresentação |
+| Política de logs | `tests/test_logs.py` | Sessão completa com ataques, log em DEBUG, sem chaves, salts, nonces, ciphertext ou texto |
+| Certificado do servidor | `tests/test_gen_cert.py` | `gen_cert.py` gera certificado não-CA, só para assinatura, que completa o handshake |
 
-Para demonstrar somente os cenários da Tarefa 3 (sete casos):
+Para rodar só os cenários obrigatórios do enunciado (troca de mensagens, bitflip, replay, framing inválido e reconexão):
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -v tests/test_scenarios.py
+```bash
+python -m pytest -v tests/test_e2e.py tests/test_scenarios.py tests/test_mitm_proxy.py
 ```
 
-No Linux, use `python -m pytest -v tests/test_scenarios.py` com o ambiente ativo.
-Os testes usam conexões TCP locais, portas livres e certificados temporários em
-memória; não exigem servidor aberto manualmente nem certificados gerados em `certs/`.
-O teste de reconexão passa a `connect()` o UUID anterior, equivalente ao uso de
-`--id` na CLI. Os frames incompletos encerram somente o envio (EOF) para que o
-servidor possa detectar a interrupção e ainda responder com `BAD_FRAME`.
-
-**Para explicar na apresentação:** “Testamos que um cliente pode sair e voltar
-com a mesma identificação, mas usando chaves novas. A conversa funciona nos dois
-sentidos e uma mensagem antiga deixa de ser válida. Também enviamos frames
-inválidos: só quem enviou é desconectado; os outros dois continuam conversando.”
-
-**Validação da Tarefa 3:** `ruff check .` aprovado e **232 testes passaram em 2,12 s**
-no ambiente Linux/Python 3.12. A base foi verificada antes das alterações: `ruff`
-aprovado e 225 testes passando, sem falhas anteriores. Os sete testes novos
-também passaram isoladamente. Após a aplicação direta na pasta do VS Code,
-a execução no Windows/Python 3.14 também passou: **232 testes em 5,56 s**,
-com `ruff check .` e `git diff --check` aprovados.
-
-**Tarefa 3:** foram adicionados somente testes e documentação. O protocolo,
-a criptografia e o código de execução do cliente e do servidor foram preservados.
-A base usada foi `52d3132`, da branch `feat/ajustes-seguranca`; o destino previsto
-do PR continua sendo `integracao`, após a integração das etapas anteriores.
-
-Ponto de versionamento, depois de validar no terminal local:
-
-```powershell
-git switch -c test/cenarios-ponta-a-ponta
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m pytest -q
-git diff --check
-git add tests/test_scenarios.py README.md README_OQFALTA.md
-git commit -m "test: valida reconexao e isolamento de framing invalido"
-```
-
-A criação da branch pelo assistente foi bloqueada pela permissão de escrita em
-`.git`; os arquivos foram aplicados diretamente na pasta conectada ao VS Code,
-sem commit, sobre `feat/ajustes-seguranca`. Crie a branch pelo terminal local.
-Não foram feitos commit, push ou PR automaticamente. A Tarefa 4 não foi iniciada.
+Os testes usam conexões TCP locais, portas livres e certificados temporários; não precisam de servidor aberto nem de certificados em `certs/`.
 
 ---
 
@@ -562,3 +413,5 @@ Não foram feitos commit, push ou PR automaticamente. A Tarefa 4 não foi inicia
 > Os logs **nunca** contêm chaves privadas, segredos ECDH, salts, nonces ou conteúdo de mensagens.
 
 Ficam registrados só eventos de conexão/desconexão, `client_id`, tamanhos de frame, motivos de rejeição e fingerprints (SHA-256 truncado) das chaves públicas.
+
+O texto das mensagens recebidas aparece só na tela do destinatário (`print`), fora do sistema de logs. O teste `tests/test_logs.py` roda uma sessão completa em nível DEBUG, incluindo bitflip, replay e saída de peer, e confere que nenhum desses segredos aparece no log, nem em hex nem como bytes.

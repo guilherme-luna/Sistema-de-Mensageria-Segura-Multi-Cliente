@@ -1,4 +1,4 @@
-"""Cenários ponta a ponta da Tarefa 3, com relay e conexões TCP reais."""
+"""Cenários ponta a ponta obrigatórios: reconexão e framing inválido, com relay e conexões TCP reais."""
 
 import asyncio
 import struct
