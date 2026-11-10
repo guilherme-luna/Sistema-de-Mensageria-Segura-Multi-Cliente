@@ -68,6 +68,7 @@ class ClientConfig:
     port: int
     pinned_cert_path: Path
     log_level: str
+    handshake_timeout: int = 10
 
 
 def load_server_config() -> ServerConfig:
@@ -90,4 +91,5 @@ def load_client_config() -> ClientConfig:
         port=_get_int("SERVER_PORT", 9000, 1, 65535),
         pinned_cert_path=_get_path("PINNED_CERT_PATH", "certs/public/server.crt"),
         log_level=_get_log_level(),
+        handshake_timeout=_get_int("HANDSHAKE_TIMEOUT", 10, 1, 300),
     )

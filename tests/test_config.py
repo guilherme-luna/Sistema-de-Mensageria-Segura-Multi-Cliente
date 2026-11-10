@@ -67,3 +67,19 @@ def test_invalid_values(monkeypatch, var, value):
     monkeypatch.setenv(var, value)
     with pytest.raises(ConfigError):
         load_server_config()
+
+
+@pytest.mark.parametrize("value, expected", [(None, 10), ("", 10), ("  ", 10), ("1", 1), ("27", 27), ("300", 300)])
+def test_handshake_timeout_for_both_sides(monkeypatch, value, expected):
+    if value is not None:
+        monkeypatch.setenv("HANDSHAKE_TIMEOUT", value)
+    assert load_client_config().handshake_timeout == expected
+    assert load_server_config().handshake_timeout == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "301", "abc", "1.5"])
+@pytest.mark.parametrize("loader", [load_client_config, load_server_config])
+def test_invalid_handshake_timeout(monkeypatch, value, loader):
+    monkeypatch.setenv("HANDSHAKE_TIMEOUT", value)
+    with pytest.raises(ConfigError, match="HANDSHAKE_TIMEOUT"):
+        loader()

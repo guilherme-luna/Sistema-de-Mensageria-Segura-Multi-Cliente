@@ -10,9 +10,16 @@ O texto das mensagens nunca vai para o log: só é devolvido a quem chamou, para
 
 import argparse
 import asyncio
+import builtins
 import logging
+import os
+import sys
+import threading
 import uuid
 from dataclasses import dataclass, field, replace
+from functools import partial
+from queue import Empty, Queue
+from threading import Event, Thread
 from typing import Optional
 
 from cryptography import x509
@@ -25,8 +32,6 @@ from common.messages import Hello, HelloResp, MessageError, PeerJoin, PeerLeave,
 from common.protocol import MAX_NAME_LEN, MAX_PLAINTEXT_LEN, E2EFrame, E2EFrameError, ErrorCode, MsgType, is_valid_name
 
 log = logging.getLogger("client")
-
-HANDSHAKE_TIMEOUT = 10
 
 
 class HandshakeError(Exception):
@@ -89,13 +94,15 @@ class ChatClient:
         self.peers: dict[bytes, Peer] = {}
         self._last_control_seq = 0
 
-    async def handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handshake(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *, timeout: float = 10,
+    ) -> None:
         """Envia HELLO e autentica o servidor pelo HELLO_RESP. Levanta HandshakeError ou CryptoError."""
         writer.write(encode_frame(MsgType.HELLO, Hello(self.client_id, self.pk, self.name).encode()))
         await writer.drain()
 
         try:
-            frame = await asyncio.wait_for(read_frame(reader), HANDSHAKE_TIMEOUT)
+            frame = await asyncio.wait_for(read_frame(reader), timeout)
         except asyncio.TimeoutError:
             raise HandshakeError("o servidor não respondeu ao HELLO") from None
         except FrameError as e:
@@ -211,6 +218,100 @@ class ChatClient:
         return ChatMessage(peer.name, plaintext.decode("utf-8", errors="replace"))
 
 
+HELP = "Comandos: /peers | /msg <nome> <texto> | /quit"
+
+
+def parse_command(line: str) -> tuple[str, str, str]:
+    """Devolve (comando, destinatário, texto); entrada inválida vira ajuda."""
+    parts = line.strip().split(maxsplit=2)
+    if parts in (["/peers"], ["/quit"]):
+        return parts[0], "", ""
+    if len(parts) == 3 and parts[0] == "/msg":
+        return "/msg", parts[1], parts[2]
+    return "/help", "", ""
+
+
+def _terminal_input(stopped: Event) -> str:
+    """Adapta input() para permitir encerrar mesmo com o teclado bloqueado.
+
+    Cancelar to_thread não interrompe input(). Só a thread daemon abaixo pode
+    ficar esperando Enter; ela não impede a saída do processo. O executor do
+    asyncio recebe EOF em até 50 ms e pode encerrar normalmente, inclusive no Windows.
+    """
+    lines: Queue[Optional[str]] = Queue()
+
+    def read() -> None:
+        try:
+            lines.put(builtins.input())
+        except (EOFError, OSError):
+            lines.put(None)
+
+    if stopped.is_set():
+        raise EOFError
+    Thread(target=read, daemon=True, name="chat-input").start()
+    while not stopped.is_set():
+        try:
+            line = lines.get(timeout=0.05)
+        except Empty:
+            continue
+        if line is None:
+            raise EOFError
+        return line
+    raise EOFError
+
+
+async def receive_messages(client: ChatClient, reader: asyncio.StreamReader) -> None:
+    while (frame := await read_frame(reader)) is not None:
+        message = client.handle_frame(frame)
+        if message is not None:
+            print(f"[{message.sender}] {message.text}", flush=True)
+    log.info("o servidor encerrou a conexão")
+
+
+async def read_commands(client: ChatClient, writer: asyncio.StreamWriter, stopped: Event) -> None:
+    # O adaptador mantém o input bloqueante fora do event loop e permite cancelamento.
+    input = partial(_terminal_input, stopped)
+    print(HELP, flush=True)
+    while True:
+        try:
+            line = await asyncio.to_thread(input)
+        except EOFError:
+            return
+        command, recipient, text = parse_command(line)
+        if command == "/quit":
+            return
+        if command == "/peers":
+            peers = "\n".join(peer.label for peer in client.peers.values())
+            print(peers or "Nenhum participante conectado.", flush=True)
+        elif command == "/msg":
+            try:
+                writer.write(client.encrypt(recipient, text))
+                await writer.drain()
+            except SendError as e:
+                print(f"Não foi possível enviar: {e}", flush=True)
+        else:
+            print(HELP, flush=True)
+
+
+async def chat(client: ChatClient, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Recebe e envia simultaneamente; a primeira tarefa a terminar encerra a outra."""
+    stopped = Event()
+    tasks = [
+        asyncio.create_task(receive_messages(client, reader)),
+        asyncio.create_task(read_commands(client, writer, stopped)),
+    ]
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in tasks:
+            if task in done:
+                task.result()  # Propaga erros para o tratamento já existente em run().
+    finally:
+        stopped.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
     try:
         pinned = crypto.load_certificate(config.pinned_cert_path)
@@ -226,19 +327,13 @@ async def run(config: ClientConfig, name: str, client_id: uuid.UUID) -> None:
     log.info("%s (%s) conectado a %s:%d", name, client_id, config.host, config.port)
     try:
         try:
-            await client.handshake(reader, writer)
+            await client.handshake(reader, writer, timeout=config.handshake_timeout)
         except crypto.AuthenticationError as e:
             raise SystemExit(f"servidor NÃO autenticado, conexão abortada: {e}") from None
         except (HandshakeError, crypto.CryptoError) as e:
             raise SystemExit(f"falha no handshake: {e}") from None
         log.info("servidor autenticado; chave efêmera %s", fingerprint(client.pk))
-        # TODO(fase 3): CLI (/peers, /msg, /quit) lendo o teclado em paralelo
-        while (frame := await read_frame(reader)) is not None:
-            message = client.handle_frame(frame)
-            if message is not None:
-                # Na tela, nunca no log (política de logs)
-                print(f"[{message.sender}] {message.text}", flush=True)
-        log.info("o servidor encerrou a conexão")
+        await chat(client, reader, writer)
     except crypto.AuthenticationError as e:
         log.error("mensagem do servidor NÃO autenticada, conexão abortada: %s", e)
     except (FrameError, ProtocolError, crypto.CryptoError) as e:
@@ -286,6 +381,21 @@ def parse_args(config: ClientConfig) -> tuple[ClientConfig, str, uuid.UUID]:
     return replace(config, host=args.host, port=args.port), args.name, client_id
 
 
+def finish(code: int = 0) -> None:
+    """Encerra o processo sem travar na thread do teclado.
+
+    Se a thread que espera um Enter ainda estiver viva, a finalização normal do
+    interpretador disputa com ela o lock do stdin; no Python 3.10 isso aborta o
+    processo ("could not acquire lock for <stdin>"). Nesse caso a saída é feita
+    com os._exit, depois de esvaziar a saída e os logs.
+    """
+    if any(t.name == "chat-input" and t.is_alive() for t in threading.enumerate()):
+        sys.stdout.flush()
+        sys.stderr.flush()
+        logging.shutdown()
+        os._exit(code)
+
+
 def main() -> None:
     force_utf8_output()
     try:
@@ -304,6 +414,7 @@ def main() -> None:
         asyncio.run(run(config, name, client_id))
     except KeyboardInterrupt:
         pass
+    finish()
 
 
 if __name__ == "__main__":

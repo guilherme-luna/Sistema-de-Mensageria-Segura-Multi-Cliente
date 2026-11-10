@@ -30,9 +30,9 @@ ruff check . && pytest -q         # tudo deve passar antes de você mexer em alg
 | Mensagens de controle | `common/messages.py` | `Hello`, `HelloResp`, `PeerJoin`, `PeerLeave` com `encode()` / `parse()` e o material assinado |
 | Servidor | `server/server.py` | handshake assinado, tabela `sessions`, anúncio de peers com `salt_AB` por par, relay por `recipient_id` |
 | Cliente | `client/client.py` | autentica o servidor, verifica `PEER_JOIN`/`PEER_LEAVE`, deriva as chaves por par, `encrypt()` / `decrypt()` com anti-replay |
-| Testes | `tests/` | 173 testes: vetores oficiais, handshake, MITM, rendezvous, relay, bitflip e replay |
+| Testes | `tests/` | Vetores oficiais, handshake, MITM, rendezvous, relay, CLI, buffer, bitflip, replay e cenários ponta a ponta |
 
-**O que ainda não funciona:** o cliente não lê o teclado. Ele conecta, autentica e mostra mensagens recebidas, mas ainda não há como enviar pelo terminal.
+**Atualização — Tarefa 1:** a CLI foi implementada com leitura simultânea do teclado e da rede. Veja a seção de CLI no `README.md`. Validação completa aprovada no terminal local: `ruff` sem erros e 200 testes passando.
 
 Utilitários úteis nos testes (`tests/helpers.py`):
 - `running_server(identity)`: sobe o servidor numa porta livre;
@@ -46,33 +46,47 @@ Utilitários úteis nos testes (`tests/helpers.py`):
 
 ### Tarefa 1 — CLI do cliente (fase 3, a mais importante)
 
-**Onde:** `client/client.py`, função `run()`, no `TODO(fase 3)`.
+**Onde:** `client/client.py`: `parse_command()`, `read_commands()`, `receive_messages()`, `chat()` e `run()`.
 
-Hoje `run()` só fica num laço lendo frames do servidor. Falta ler o teclado **ao mesmo tempo**:
+Implementação da CLI concluída e validada:
 
-- [ ] Rodar duas tarefas em paralelo: uma lendo frames (o laço que já existe) e outra lendo linhas do teclado. No Windows, `input()` bloqueia; use `await asyncio.to_thread(input)` para não travar o laço.
-- [ ] `/peers`: listar `client.peers.values()` (nome e `client_id`).
-- [ ] `/msg <nome> <texto>`: `writer.write(client.encrypt(nome, texto))` e `await writer.drain()`. Tratar `SendError` mostrando a mensagem, sem encerrar.
-- [ ] `/quit`: fechar a conexão e sair.
-- [ ] Comando desconhecido: mostrar a ajuda.
-- [ ] Quando uma tarefa terminar (servidor caiu ou `/quit`), cancelar a outra.
-- [ ] Testes em `tests/test_cli.py`: separar a interpretação do comando numa função pura (ex.: `parse_command(linha)`) e testá-la sem rede.
+- [x] Rodar duas tarefas em paralelo: uma lendo frames (o laço que já existe) e outra lendo linhas do teclado. No Windows, `input()` bloqueia; use `await asyncio.to_thread(input)` para não travar o laço.
+- [x] `/peers`: listar `client.peers.values()` (nome e `client_id`).
+- [x] `/msg <nome> <texto>`: `writer.write(client.encrypt(nome, texto))` e `await writer.drain()`. Tratar `SendError` mostrando a mensagem, sem encerrar.
+- [x] `/quit`: fechar a conexão e sair.
+- [x] Comando desconhecido: mostrar a ajuda.
+- [x] Quando uma tarefa terminar (servidor caiu ou `/quit`), cancelar a outra.
+- [x] Testes em `tests/test_cli.py`: separar a interpretação do comando numa função pura (ex.: `parse_command(linha)`) e cobri-la sem rede; foram acrescentados também testes de CLI com rede e de encerramento em subprocesso.
 
 **Regra:** o texto das mensagens vai para a tela com `print()`, **nunca** para o `log`.
 
+**Validação desta etapa:** no terminal local do integrante, após instalar as dependências, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **200 passed in 3.24s** (27 testes de CLI). Inicialmente, o ambiente do assistente não tinha as dependências e a instalação falhou por DNS; não há resultado da suíte anterior às mudanças para comparação. A suíte da Tarefa 1 foi aprovada antes do início da Tarefa 2.
+
+**Git da Tarefa 1:** base `integracao` (commit `891f963`); branch `feat/cli-cliente`, com a CLI registrada no commit `29c4cd5`.
+
 ### Tarefa 2 — Ajustes já aprovados na revisão
 
-- [ ] **Timeout do cliente pela configuração.** Em `client/client.py`, `HANDSHAKE_TIMEOUT = 10` está fixo. Adicione `handshake_timeout` ao `ClientConfig` em `common/config.py`, lendo a mesma variável `HANDSHAKE_TIMEOUT` que o servidor usa. Atualize `tests/test_config.py`.
-- [ ] **Limite de buffer no servidor.** Em `server/server.py`, `_relay()` e `_send_control()` escrevem sem esperar o envio. Se `recipient.writer.transport.get_write_buffer_size()` passar de um limite (ex.: 1 MiB), feche a conexão desse destinatário. Escreva um teste com um cliente que nunca lê.
-- [ ] **README: frase sobre o servidor.** Trocar "não tem como decifrar" por algo como "um servidor honesto não consegue decifrar". Adicionar uma nota: um servidor malicioso, que assina o que quiser, poderia anunciar uma chave falsa no `PEER_JOIN`.
+Implementação concluída e validação completa aprovada no terminal local:
+
+- [x] **Timeout do cliente pela configuração:** `ClientConfig.handshake_timeout` lê `HANDSHAKE_TIMEOUT` (padrão 10, faixa 1–300), e `run()` passa esse prazo ao handshake. Testes de configuração e do prazo em `tests/test_config.py` e `tests/test_handshake.py`.
+- [x] **Limite de buffer no servidor:** `_send_bounded()` limita a fila a 1 MiB antes de cada escrita de relay/controle. Ao ultrapassar, aborta só a conexão lenta; o fluxo existente remove a sessão. `tests/test_server_buffers.py` inclui testes determinísticos e uma conexão real que para de ler.
+- [x] **README: confiança no servidor:** esclarecido que um servidor honesto não consegue decifrar e que um servidor malicioso poderia assinar anúncios de chaves falsas.
+
+**Validação:** no terminal local, `ruff check .` retornou `All checks passed!` e `pytest -q` retornou **225 passed in 3.67s**. Inclui os testes assíncronos novos e a conexão real que para de ler, sem prejudicar os outros clientes. O bloqueio do event loop no ambiente do assistente não ocorreu no terminal local.
+
+**Git:** branch `feat/ajustes-seguranca` criada pelo integrante. O commit `512a6ef` já contém parte da etapa (cliente e documentação), apesar da mensagem da CLI. A etapa foi publicada pelo integrante no commit `52d3132` da branch `feat/ajustes-seguranca`, usado como base da Tarefa 3.
 
 ### Tarefa 3 — Cenários obrigatórios ponta a ponta (fase 4)
 
-Bitflip e replay já são rejeitados e testados em `tests/test_e2e.py`. Falta:
+- [x] **Reconexão com troca de mensagens:** `tests/test_scenarios.py::test_reconnection_exchanges_messages_with_fresh_keys` troca mensagens antes e depois de sair e voltar com o mesmo UUID/nome. Confere chave efêmera e chaves por direção novas, correspondência entre os lados, contadores reiniciados e rejeição de ciphertext da sessão antiga.
+- [x] **Framing inválido depois do handshake:** `tests/test_scenarios.py::test_invalid_framing_disconnects_only_offender` cobre seis casos: tamanho zero, acima do limite, tamanho forjado, tipo desconhecido, prefixo incompleto e corpo incompleto. Confere `BAD_FRAME`, EOF, saída do infrator e mensagens nas duas direções entre os clientes restantes.
+- [x] **README revisado:** a seção “Testes” descreve os cenários e arquivos existentes, os comandos para execução e a explicação curta para apresentação.
 
-- [ ] **Reconexão com troca de mensagens:** cliente sai, volta com o mesmo `--id`, e os dois trocam mensagens com as chaves novas. Base: `test_reconnection_gets_fresh_keys` em `tests/test_rendezvous.py`.
-- [ ] **Framing inválido depois do handshake** derruba só aquele cliente e os outros continuam conversando.
-- [ ] Conferir se a seção "Testes" do `README.md` corresponde aos testes que existem.
+**Escopo:** apenas `tests/test_scenarios.py`, `README.md` e `README_OQFALTA.md`. Sem mudanças no protocolo, na criptografia ou no código de execução.
+
+**Validação:** a base `52d3132` passou em `ruff` e nos 225 testes originais. Os sete casos novos passaram isoladamente; a suíte completa final passou com **232 testes em 2,12 s**, e `ruff check .` foi aprovado. Após aplicação direta no VS Code, validado também no Windows/Python 3.14: **232 testes passaram em 5,56 s**, com `ruff check .` e `git diff --check` aprovados.
+
+**Git:** arquivos aplicados diretamente na pasta do VS Code, sobre `feat/ajustes-seguranca` (`52d3132`). A criação de `test/cenarios-ponta-a-ponta` pelo assistente foi bloqueada pela permissão em `.git`; crie a branch pelo terminal local. Commit sugerido `test: valida reconexao e isolamento de framing invalido`, destino do PR `integracao` após as etapas anteriores. Sem commit, push ou PR automático. A Tarefa 4 não foi iniciada.
 
 ### Tarefa 4 — Proxy MITM para a demonstração (fase 5)
 

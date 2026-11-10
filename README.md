@@ -2,7 +2,7 @@
 
 # 🔐 Sistema de Mensageria Segura Multi-Cliente
 
-Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servidor funciona só como *relay*: ele autentica o handshake e distribui as chaves públicas, mas **não tem como decifrar** as mensagens trocadas entre os clientes.
+Chat multi-cliente com **criptografia ponta-a-ponta (E2E)** em Python. O servidor funciona só como *relay*: ele autentica o handshake e distribui as chaves públicas; **um servidor honesto não consegue decifrar** as mensagens trocadas entre os clientes.
 
 [![CI](https://github.com/guilherme-luna/Sistema-de-Mensageria-Segura-Multi-Cliente/actions/workflows/ci.yml/badge.svg)](https://github.com/guilherme-luna/Sistema-de-Mensageria-Segura-Multi-Cliente/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
@@ -99,6 +99,14 @@ Cliente A (1º a conectar)         Servidor                  Cliente B (2º a co
 3. **Rendezvous:** para cada par de clientes, o servidor gera um `salt_AB` aleatório e envia aos dois um `PEER_JOIN` com o `client_id`, a chave pública e o nome do outro, o `salt_AB` e um contador `seq_send`, tudo assinado com RSA-PSS. Um MITM não consegue trocar a chave de um peer sem invalidar a assinatura.
 4. **Derivação:** cada par calcula o segredo ECDH e deriva uma chave AES por direção via HKDF com o `salt_AB` do par.
 5. **Mensagens:** cada mensagem é cifrada com AES-128-GCM e o servidor só a encaminha.
+
+**Confiança no servidor:** a assinatura de `PEER_JOIN` confirma que o anúncio
+foi emitido pelo servidor autenticado. Ela não prova que esse servidor é honesto.
+Um servidor malicioso, com sua chave RSA legítima, poderia anunciar chaves
+X25519 falsas aos participantes e intermediar as mensagens, comprometendo
+a confidencialidade. O projeto pressupõe um servidor honesto na distribuição
+das chaves públicas. O certificado pinado protege contra a substituição do
+servidor por terceiros; não elimina essa confiança no próprio servidor.
 
 ### Formato dos frames
 
@@ -203,7 +211,7 @@ cp .env.example .env
 | `SERVER_HOST` | `127.0.0.1` | cliente | endereço do servidor |
 | `SERVER_PORT` | `9000` | servidor / cliente | porta TCP |
 | `MAX_CLIENTS` | `64` | servidor | conexões simultâneas aceitas |
-| `HANDSHAKE_TIMEOUT` | `10` | servidor | segundos para concluir o handshake |
+| `HANDSHAKE_TIMEOUT` | `10` | servidor / cliente | prazo do handshake em segundos (1 a 300) |
 | `SERVER_KEY_PATH` | `certs/server.key` | servidor | chave privada RSA |
 | `SERVER_CERT_PATH` | `certs/public/server.crt` | servidor | certificado autoassinado |
 | `PINNED_CERT_PATH` | `certs/public/server.crt` | cliente | certificado pinado do servidor |
@@ -246,6 +254,137 @@ O nome aceita de 1 a 32 caracteres entre letras, números, `_` e `-`. A cada exe
 | `/peers` | lista os clientes conectados |
 | `/msg <nome> <texto>` | envia uma mensagem E2E |
 | `/quit` | desconecta |
+
+### CLI do cliente — Tarefa 1
+
+O cliente recebe mensagens enquanto espera comandos. `/peers` mostra o nome e o
+UUID de cada outro participante; sem participantes, mostra um aviso. Use, por exemplo,
+`/msg bob Olá, Bob!` no terminal de Alice e `/msg alice Olá, Alice!` no de Bob.
+Uma mensagem recebida aparece como `[alice] Olá, Bob!`, somente na tela.
+Comandos desconhecidos, vazios ou incompletos mostram a ajuda. Um destinatário
+ausente ou uma mensagem acima de 4096 bytes gera um aviso e permite tentar novamente.
+
+`/quit`, fim da entrada (EOF) ou desconexão do servidor encerram a sessão. Para
+verificar o último caso, pare o servidor enquanto os clientes aguardam o teclado:
+eles devem sair sem precisar pressionar Enter. No Windows, EOF pode ser informado
+com Ctrl+Z e Enter; Ctrl+C também encerra o programa.
+
+**Como o código está organizado:**
+
+- `parse_command()` interpreta a linha sem usar rede nem alterar o cliente.
+- `read_commands()` lista participantes ou usa `encrypt()`, `writer.write()` e
+  `writer.drain()` para enviar; trata `SendError` na tela.
+- `receive_messages()` processa os frames e mostra as mensagens com `print()`.
+- `chat()` executa os dois laços e, quando um termina, cancela e aguarda o outro.
+  `run()` mantém o handshake e o fechamento da conexão no seu `finally`.
+- `_terminal_input()` adapta a leitura bloqueante: `read_commands()` usa
+  `await asyncio.to_thread(input)` com esse adaptador. Uma thread daemon lê o
+  `input()` original e uma fila entrega a linha. Um evento libera a espera do
+  executor em até 50 ms ao encerrar. Isso evita que `asyncio.run()` fique preso
+  esperando o executor depois da queda do servidor, inclusive no Windows. A thread
+  daemon que ainda espera Enter não impede a saída do processo; a CLI é destinada
+  a uma sessão por processo.
+
+**Validação:** execute na raiz, no PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m ensurepip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q tests/test_cli.py
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+`tests/test_cli.py` cobre interpretação, listagem, envio E2E, recuperação após
+erro, recepção durante espera pelo teclado, saída/EOF, cancelamento, limpeza da
+conexão e encerramento de um processo com a entrada ainda aberta. Os testes de
+rede usam certificados temporários em memória, sem gerar chaves no repositório.
+
+**Validação concluída no terminal local (Windows, Python 3.14):**
+
+- `ruff check .`: `All checks passed!`.
+- `pytest -q`: **200 passed in 3.24s**, incluindo os 27 testes de CLI.
+
+Inicialmente, o ambiente do assistente não tinha as dependências e não conseguiu
+instalá-las por falha de DNS. Depois, a instalação e os checks completos foram
+executados com sucesso pelo integrante no terminal local. Não há execução da
+suíte anterior às mudanças para comparação; a suíte atual completa passou.
+
+**Para explicar na apresentação:** “O cliente tem duas tarefas: uma recebe a rede
+e outra lê o teclado. O comando de envio usa a criptografia que já existia.
+Se houver erro de envio, mostramos o aviso e continuamos. Quando o usuário sai
+ou o servidor desconecta, encerramos as tarefas e fechamos a conexão.”
+
+**Ponto de versionamento:** esta etapa altera somente `client/client.py`,
+`tests/test_cli.py`, `README.md` e `README_OQFALTA.md`. A branch
+`feat/cli-cliente` já foi criada a partir de `integracao`, e os checks passaram.
+Após revisar, registre o commit com os comandos abaixo:
+
+```powershell
+git diff --check
+git add client/client.py tests/test_cli.py README.md README_OQFALTA.md
+git commit -m "feat: implementa comandos do cliente no terminal"
+```
+
+O destino previsto do PR é `integracao`. As tarefas seguintes não foram iniciadas.
+
+### Ajustes de configuração e buffer — Tarefa 2
+
+`HANDSHAKE_TIMEOUT` agora é lido tanto pelo servidor quanto pelo cliente, com
+padrão de 10 segundos e valores inteiros permitidos de 1 a 300. O servidor limita
+a espera pelo `HELLO`; o cliente limita a espera pelo `HELLO_RESP`. Valor vazio
+usa o padrão; valor inválido impede a inicialização com um erro de configuração.
+Exemplo no PowerShell, antes de iniciar o programa naquele terminal:
+
+```powershell
+$env:HANDSHAKE_TIMEOUT = "20"
+```
+
+O relay limita a fila de saída de cada destinatário a **1 MiB**
+(`MAX_WRITE_BUFFER`, em `server/server.py`). `_send_bounded()` confere o tamanho
+atual mais o próximo frame antes de escrever. Se o envio ultrapassaria o limite,
+usa `transport.abort()` para descartar a fila e encerrar só aquela conexão.
+Um fechamento comum com `close()` poderia continuar esperando os bytes escoarem.
+O tratamento de desconexão existente remove a sessão e anuncia `PEER_LEAVE`.
+Essa proteção vale para os frames E2E, os avisos assinados e o erro de destinatário
+ausente, sem alterar a criptografia nem o formato do protocolo.
+
+**Para explicar:** “Um cliente que não lê pode acumular mensagens no servidor.
+Limitamos essa fila e desconectamos somente esse cliente, mantendo os demais.
+Também tornamos o prazo do handshake configurável e documentamos a confiança
+necessária no servidor que distribui as chaves.”
+
+**Testes da etapa:** `tests/test_config.py` cobre o prazo padrão, os limites e
+os valores inválidos nos dois lados. `tests/test_handshake.py` verifica a aplicação
+do prazo e seu repasse pela configuração. `tests/test_server_buffers.py` testa o
+limite exato, o descarte de conexões lentas e os avisos de controle; inclui uma
+conexão real que deixa de ler, enche a fila e é removida enquanto outros dois
+clientes continuam trocando mensagens.
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+**Validação concluída no terminal local (Windows):** `ruff check .` retornou
+`All checks passed!` e `pytest -q` retornou **225 passed in 3.67s**, incluindo os
+testes assíncronos e o cenário real de destinatário sem leitura. O bloqueio de
+`socketpair` observado no ambiente do assistente não ocorreu no terminal local.
+
+**Ponto de versionamento:** a branch `feat/ajustes-seguranca` foi criada no
+terminal local. Ela já contém o commit `512a6ef`, que registrou parte desta etapa
+(documentação e cliente) com a mensagem da CLI. Os arquivos restantes e esta
+atualização de validação devem ser registrados no próximo commit:
+
+```powershell
+git diff --check
+git add common/config.py client/client.py server/server.py .env.example tests/test_config.py tests/test_handshake.py tests/test_server_buffers.py README.md README_OQFALTA.md
+git commit -m "fix: configura timeout e limita buffer de envio"
+```
+
+A branch parte do commit da CLI para preservar a Tarefa 1. O PR desta etapa deve
+ter como destino `integracao`, após a integração do PR da CLI. Não foram feitos
+commit, push ou PR automaticamente. A Tarefa 3 ainda não foi iniciada.
 
 ### Em máquinas diferentes (mesma rede)
 
@@ -315,17 +454,70 @@ docker compose run --rm client --name alice     # cliente, em outro terminal
 
 ## 🧪 Testes
 
+Na raiz do projeto, com as dependências de desenvolvimento instaladas:
+
 ```bash
-pytest -v
+python -m ruff check .
+python -m pytest -q
 ```
 
-Os testes cobrem os cenários obrigatórios:
+| Cobertura | Arquivo principal | O que é verificado |
+|---|---|---|
+| Troca de mensagens E2E | `tests/test_e2e.py` | Dois ou mais clientes, ambas as direções, texto e limites de envio |
+| Adulteração e replay | `tests/test_e2e.py` | Falha de autenticação, contador repetido e continuidade após descarte |
+| Reconexão completa | `tests/test_scenarios.py` | Mesmo UUID e nome, nova chave efêmera, novas chaves por direção, contadores reiniciados e mensagens nas duas direções |
+| Mensagem da sessão anterior | `tests/test_scenarios.py` | Ciphertext antigo é rejeitado após reconexão sem impedir mensagens novas |
+| Framing inválido após autenticação | `tests/test_scenarios.py` | Tamanho zero, acima do limite, tamanho forjado, tipo desconhecido, prefixo incompleto e corpo incompleto |
+| Isolamento do erro de framing | `tests/test_scenarios.py` | `BAD_FRAME`, encerramento só do infrator, `PEER_LEAVE` e outros dois clientes continuam conversando |
+| Handshake e distribuição de chaves | `tests/test_handshake.py`, `tests/test_rendezvous.py` | Certificado pinado, assinaturas, papéis e anúncios de participantes |
+| CLI e configuração | `tests/test_cli.py`, `tests/test_config.py` | Comandos, encerramento, variáveis e timeout |
+| Destinatário sem leitura | `tests/test_server_buffers.py` | Limite de 1 MiB e continuidade dos clientes restantes |
 
-- ✅ troca de mensagens E2E entre 2+ clientes
-- 🧨 frame adulterado (bitflip) → rejeitado por falha na tag GCM
-- 🔁 frame reenviado (replay) → rejeitado por `seq_no` repetido
-- 🚫 framing inválido → erro e desconexão segura
-- 🔌 reconexão com o mesmo `client_id` → handshake completo e chaves novas
+Para demonstrar somente os cenários da Tarefa 3 (sete casos):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -v tests/test_scenarios.py
+```
+
+No Linux, use `python -m pytest -v tests/test_scenarios.py` com o ambiente ativo.
+Os testes usam conexões TCP locais, portas livres e certificados temporários em
+memória; não exigem servidor aberto manualmente nem certificados gerados em `certs/`.
+O teste de reconexão passa a `connect()` o UUID anterior, equivalente ao uso de
+`--id` na CLI. Os frames incompletos encerram somente o envio (EOF) para que o
+servidor possa detectar a interrupção e ainda responder com `BAD_FRAME`.
+
+**Para explicar na apresentação:** “Testamos que um cliente pode sair e voltar
+com a mesma identificação, mas usando chaves novas. A conversa funciona nos dois
+sentidos e uma mensagem antiga deixa de ser válida. Também enviamos frames
+inválidos: só quem enviou é desconectado; os outros dois continuam conversando.”
+
+**Validação da Tarefa 3:** `ruff check .` aprovado e **232 testes passaram em 2,12 s**
+no ambiente Linux/Python 3.12. A base foi verificada antes das alterações: `ruff`
+aprovado e 225 testes passando, sem falhas anteriores. Os sete testes novos
+também passaram isoladamente. Após a aplicação direta na pasta do VS Code,
+a execução no Windows/Python 3.14 também passou: **232 testes em 5,56 s**,
+com `ruff check .` e `git diff --check` aprovados.
+
+**Tarefa 3:** foram adicionados somente testes e documentação. O protocolo,
+a criptografia e o código de execução do cliente e do servidor foram preservados.
+A base usada foi `52d3132`, da branch `feat/ajustes-seguranca`; o destino previsto
+do PR continua sendo `integracao`, após a integração das etapas anteriores.
+
+Ponto de versionamento, depois de validar no terminal local:
+
+```powershell
+git switch -c test/cenarios-ponta-a-ponta
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+git diff --check
+git add tests/test_scenarios.py README.md README_OQFALTA.md
+git commit -m "test: valida reconexao e isolamento de framing invalido"
+```
+
+A criação da branch pelo assistente foi bloqueada pela permissão de escrita em
+`.git`; os arquivos foram aplicados diretamente na pasta conectada ao VS Code,
+sem commit, sobre `feat/ajustes-seguranca`. Crie a branch pelo terminal local.
+Não foram feitos commit, push ou PR automaticamente. A Tarefa 4 não foi iniciada.
 
 ---
 

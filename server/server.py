@@ -33,6 +33,8 @@ from common.protocol import MSG_TYPE_LEN, E2EFrame, E2EFrameError, ErrorCode, Ms
 
 log = logging.getLogger("server")
 
+MAX_WRITE_BUFFER = 1024 * 1024  # 1 MiB de fila por destinatário
+
 
 async def _close(writer: asyncio.StreamWriter) -> None:
     writer.close()
@@ -148,13 +150,28 @@ class RelayServer:
 
     # --- Rendezvous ---
 
+    def _send_bounded(self, recipient: Session, frame: bytes) -> bool:
+        """Envia sem bloquear os outros clientes; descarta conexões com fila cheia."""
+        writer = recipient.writer
+        if writer.is_closing():
+            return False
+        # Verifica antes de escrever para que nem o próximo frame ultrapasse o limite.
+        if writer.transport.get_write_buffer_size() + len(frame) > MAX_WRITE_BUFFER:
+            log.warning("limite de buffer de envio atingido para %s; desconectando", recipient.label)
+            # close() tentaria escoar a fila. abort() a descarta mesmo se o peer não lê.
+            # O finally de handle_connection remove a sessão e anuncia PEER_LEAVE.
+            writer.transport.abort()
+            return False
+        writer.write(frame)
+        return True
+
     def _send_control(self, recipient: Session, msg: PeerJoin | PeerLeave) -> None:
         """Numera com o seq_send do destinatário, assina e envia uma mensagem de controle."""
         recipient.seq_send += 1
         msg = replace(msg, seq_send=recipient.seq_send)
         signature = crypto.sign_pss(self._key, msg.signed_material(recipient.client_id, recipient.salt))
         msg_type = MsgType.PEER_JOIN if isinstance(msg, PeerJoin) else MsgType.PEER_LEAVE
-        recipient.writer.write(encode_frame(msg_type, replace(msg, signature=signature).encode()))
+        self._send_bounded(recipient, encode_frame(msg_type, replace(msg, signature=signature).encode()))
 
     def _announce_join(self, newcomer: Session) -> None:
         """Apresenta o recém-chegado a cada cliente já conectado, com um salt_AB novo por par."""
@@ -194,11 +211,11 @@ class RelayServer:
         recipient = self.sessions.get(e2e.recipient_id)
         if recipient is None or recipient is sender:
             log.info("frame de %s para destinatário desconhecido descartado", sender.label)
-            sender.writer.write(encode_error(ErrorCode.UNKNOWN_RECIPIENT))
+            self._send_bounded(sender, encode_error(ErrorCode.UNKNOWN_RECIPIENT))
             return
         # Os bytes são repassados sem alteração: o servidor não tem a chave para lê-los
-        recipient.writer.write(encode_frame(MsgType.E2E, body))
-        log.debug("relay %s -> %s, %d bytes", sender.label, recipient.label, len(body))
+        if self._send_bounded(recipient, encode_frame(MsgType.E2E, body)):
+            log.debug("relay %s -> %s, %d bytes", sender.label, recipient.label, len(body))
 
     async def serve(self) -> None:
         host, port = self.config.bind_host, self.config.port
